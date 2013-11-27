@@ -1,0 +1,37 @@
+#!/bin/bash
+# pf control script for 'MicroStrategy' component - mawalsh
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+chk_microstrategy_valid_monitor() {
+
+	#Only run if MicroStrategy is installed!
+	local adw
+
+        adw=`hostname | cut -d \- -f 2,3 | egrep -c "adw-bi[0-9]+"`
+        if [ "$adw" -eq 1 ]; then
+                return 0
+        else
+                return 1
+        fi
+
+}
+
+chk_microstrategy_alerts() {
+
+	local micst
+	local RC=0
+	local DELAY=
+	micst=`sudo -n /sbin/service microstrategy status | cut -d\: -f 2 | sed 's/^ //g'`
+	#micst="stopped"
+
+	if [ "$micst" != "running" ]; then
+                RC=2
+		DELAY="$micst"
+        fi
+                add_alert "microstrategy_not_running" $RC $DELAY
+
+}

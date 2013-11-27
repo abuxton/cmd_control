@@ -1,0 +1,248 @@
+#!/bin/bash
+##########################################################################################
+# This script collects production transaction totals from nova clusters as defined in the etc/hostlist # It is run by the NOVA nagios and can alarm based on thresholds passed in as args # Nagios return codes:
+# 2 = Critical Event, 1 = Warning Event, 0 = OK Event, 3 = Unknown Event ###########################################################################################
+print_usage() {
+	/bin/echo "USAGE: $0 -w warn -c crit -n name_of_check -s name_of_service [-x regex] [-m minimum] [-g regexStringSearch]"
+	/bin/echo "WARN threshold should be lower than CRITICAL"
+    /bin/echo "name_of_check must be either TOTAL or ERRORS"
+	/bin/echo "threshold Y or N indicates if process alert logic"
+    /bin/echo "minimum is a min throughput below which critical alarm will be thrown"
+}
+
+#remember bash's default internal separator so we can restore at the end
+OIFS=$IFS
+#change bash's internal separator from space/tab/newline to newline only - this helps keep 1 entry per full log line
+IFS=$'\n'
+
+check_regex(){
+   #Start  definition name_of_check
+   searchRegex=''
+   checked=0
+   case ${name_of_check} in
+      'errors') searchRegex=' [4-9][0-9][0-9] '; checked=1
+       ;;
+       'overall') searchRegex=''; checked=1
+       ;;
+       '50x') searchRegex=' 50[0-9] '; checked=1
+       ;;
+       '500') searchRegex=" 500 "; checked=1
+       ;;  
+       '502') searchRegex=' 502 '; checked=1
+       ;;  
+       '504') searchRegex=' 504 '; checked=1
+       ;;
+       'slowdown1000ms') searchRegex='[1-9][0-9][0-9][0-9]ms '; checked=1
+       ;;   
+       'slowdown2000ms') searchRegex='[2-9][0-9][0-9][0-9]ms '; checked=1
+       ;;   
+       #'slowdown10ms') searchRegex='[1-9][0-9]ms '; checked=1
+       #;;   
+   esac
+   if [[ checked -eq 0 ]] ; then
+      #name_of_check='Overall'
+      #searchRegex=''
+      /bin/echo "GOPOverallTxnCountMonitor Invalid Name of Check ErrorCode:3"
+      exit 3
+   fi 
+   if [[ debug -eq 1 ]] ; then
+      echo -e $searchRegex
+   fi
+}
+
+checkRequestorXgame(){
+  result=$(echo $errRegex | grep -c ":")
+  if [[ result -eq 1 ]] ; then
+     v_xgame=$(echo ${errRegex#*:} )
+     v_requestor=$(echo ${errRegex%:*})
+     reqRegex=".*$v_requestor.*$v_xgame"
+  else
+    reqRegex=".*"$errRegex
+  fi
+#  v_xgame=$(echo $errRegex |  cut -d':' -f2)   
+#  v_requestor=$(echo $errRegex | cut -d':' -f1)   
+}
+
+
+get_cached_file(){
+
+   #echo 'Searching for:'$searchRegex':'
+   cache_5min_lock=cache_5min.lock 
+   cache_5min_logfile=cache_5min.log 
+
+   #If file was generated more than 2 minutes ago then regenerate
+   #echo $httpLogRoot
+   too_old=$(find $httpLogRoot -type f -iname $cache_5min_logfile -mmin -2 -print | wc -l)
+
+      if [[ $debug -eq 1 ]] ; then
+         echo "Too old "$too_old
+      fi
+   #Trying to avoid access while generating new cache file
+   if [[ $too_old -eq 0 ]]; then
+     if [[ ! -f $httpLogRoot/$cache_5min_lock ]]; then
+           if [[ $debug -eq 1 ]] ; then 
+             echo "Generating new cache file"
+           fi
+           touch $httpLogRoot/$cache_5min_lock
+	   output=$(find $httpLogRoot -type f -iname "*$httpLogName*" -not -name "*.gz" -mmin -5  -exec nice -n 19 grep -E "($searchTime)" {} \;   > $httpLogRoot/$cache_5min_logfile)
+	   rm $httpLogRoot/$cache_5min_lock
+     else
+        while [ -f $httpLogRoot/$cache_5min_lock]
+        do	 
+           sleep 1
+	done	
+     fi
+   fi
+}
+
+err_code="500"
+debug=0
+
+while getopts w:c:t:n:s:x:m:g: option; do
+  case ${option} in
+	w) warn=$OPTARG
+	   ;;
+	c) crit=$OPTARG
+	   ;;
+	t) threshold="$OPTARG"
+       ;;
+	n) name_of_check="$OPTARG"
+       ;;   
+    s) name_of_service="$OPTARG"
+       ;;
+    x) errRegex="$OPTARG"
+       ;;
+    m) minimumTP="$OPTARG"
+       ;;
+    g) stringRegex="$OPTARG"
+       ;;
+	h) print_usage
+	   exit 0
+	   ;;
+	--help) print_usage
+	   exit 0
+	   ;;
+	\?) print_usage
+	   exit 3
+	   ;;
+	esac
+done
+
+
+if [[ -z $warn ]]; then
+        warn="null"
+fi
+if [[ -z $crit ]]; then
+        crit="null"
+fi
+if [[ -z $minimumTP ]]; then
+        minimumTP="null"
+fi
+if [[ -z $name_of_check ]];then
+        print_usage
+        exit 3
+fi
+
+if [[ ($warn != "null" && $crit != "null") ]]; then
+        if [[ $warn -ge $crit ]]; then
+        print_usage
+        exit 3
+        fi
+fi
+
+###### Prepare for Collection - set the "last 5 minutes" query term ######### i=0
+minToScan=5
+for ((minOffset=minToScan; minOffset >= 1; minOffset--)) do
+    dateStamps[i]="$(date --date "$(date --date "$dte $minOffset min ago")" +'%m/%d/%y %H:%M|')"
+    let "i += 1"
+    searchString=$searchString"$(date --date "$(date --date "$dte $minOffset min ago")" +'%m/%d/%y %H:%M|')"
+done
+searchString=${searchString%|}
+searchTime=$searchString
+
+if [[ debug -eq 1 ]] ; then 
+   echo "searchTIme  " $searchTime
+fi
+#The following is a default location for all servers of all clusters and all purposes
+NOVA_HOME=/opt/ea/nova
+#A file containing specific behavious for a specific kind of servers
+PROP_FILE=GOPTxnCOunt.prop
+
+if [[ -f $NOVA_HOME/$PROP_FILE ]] ; then
+   . $NOVA_HOME/$PROP_FILE
+else
+#  default to nucleus standard httpd logname and location #  but check for clusters with non-standard locations httpLogRoot="/opt/ea/nova/nucleus/"
+   httpLogRoot="/opt/ea/nova/nucleus/"
+   httpLogName="httpd_access.log"
+fi
+
+#searchRegex=$(check_regex)
+check_regex
+if [[ debug -eq 1 ]] ; then 
+   echo "RegEx " $searchRegex
+fi
+
+#End definitions name_of_check
+
+reqRegex=""
+
+# If a regex for requestorId / xgame is passed in, then override the search with the one specified  
+if [[ -n $errRegex ]]; then
+   #If passed something in errRegex, get the Requestor/Xgame/Both 
+   checkRequestorXgame  
+   searchRegex="$searchRegex$reqRegex"
+fi
+
+if [[ debug -eq 1 ]] ; then 
+   echo "RegEx " $searchRegex
+fi
+
+if [[ -n $stringRegex ]]; then
+  searchRegex=".*$stringRegex$searchRegex"
+fi
+
+
+#Try to generate 5 minute cache file and avoid concurrent access when generating the file 
+get_cached_file 
+
+#Search for the case
+output=$(grep -i "$searchRegex" $httpLogRoot/$cache_5min_logfile | wc -l)
+
+rate=$(echo "$output/$minToScan" | bc)
+
+#restore internal separator to default
+IFS=$OIFS
+
+if [[ ($threshold = "Y") ]]; then
+    output="TOTAL COUNT:$output RATE:$rate txn/min"
+    v_rate=$name_of_check"TPM:"$rate
+      if [[ $debug -eq 1 ]] ; then
+         echo "output  "$output
+      fi
+    if [[ $crit = "null" && $warn = "null"  ]]; then
+        v_error="ErrorCode:0"
+        /bin/echo "GOPOverallTxnCountMonitor $name_of_check OK 200 ::$output $v_error|$v_rate"
+        exit 0
+     fi
+     if [[ ($crit != "null" && $(echo "$rate > $crit"|bc) -eq 1 || $(echo "$rate < $minimumTP"|bc) -eq 1) ]];then
+        v_error="ErrorCode:2"
+		/bin/echo "GOPOverallTxnCountMonitor $name_of_check CRITICAL $err_code ::$output $v_error |$v_rate"
+		exit 2
+	elif [[ $warn != "null" && $(echo "$rate > $warn"|bc) -eq 1 ]];then 
+        v_error="ErrorCode:1"
+		/bin/echo  "GOPOverallTxnCountMonitor $name_of_check WARNING $err_code ::$output $v_error |$v_rate"
+		exit 1
+	elif [[ ($(echo "$rate < $warn"|bc) -eq 1 || $(echo "$rate < $crit"|bc) -eq 1) ]];then
+        v_error="ErrorCode:0"
+		/bin/echo "GOPOverallTxnCountMonitor $name_of_check OK 200 ::$output $v_error |$v_rate"
+		exit 0
+	fi
+    v_error="ErrorCode:3"
+	/bin/echo "GOPOverallTxnCountMonitor $v_error"
+	exit 3
+else 
+ 	/bin/echo "Rate:$rate"
+    exit 0
+fi 
+
+

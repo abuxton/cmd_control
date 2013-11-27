@@ -1,0 +1,75 @@
+#!/bin/bash
+# control scripts for 'generatenames-s3-push.sh' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+generatenames_s3_stale_valid_monitor() {
+    if [ "`hostname`" = 'live-clusterduck-web00' ]; then
+      return 0
+    else
+      return 1
+    fi
+}
+
+generatenames_s3_stale_alerts() {
+  local rc=0
+  local timenow="`date +\"%s\"`"
+  local etc_playfish="/etc/playfish"
+  local stale_threshold=21600
+  local s3_bucket="chef.playfish.com"
+  local s3_key="configurations/generatenames"
+  local modified_time
+  local file
+  local error_text="Everything is fine"
+  local local_md5sum
+  local remote_md5sum
+  local temp_file
+
+  # s3cmd read-only keys
+  export AWS_ACCESS_KEY_ID="AKIAIIYTOLDWY2DWLWWQ"
+  export AWS_SECRET_ACCESS_KEY="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"
+
+  # For each generatenames file, check that it is not stale locally
+  for file in `ls $etc_playfish/*.db`; do
+    modified_time="`stat --printf %Y $file`"
+
+    if [ $(($timenow - $modified_time)) -gt $stale_threshold ]; then
+      error_text="$file on `hostname` is older than $stale_threshold seconds"
+      rc=1
+    fi
+
+  done
+
+  add_alert "generatenames_is_stale_locally" "$rc" "$error_text"
+  error_text="Everything is fine"
+
+  # For each generatenames file, check that it has been correctly uploaded to s3
+  for file in `ls $etc_playfish/*.db`; do
+
+    # Get a copy of the file from s3
+    tempfile="`mktemp /tmp/generatenames_s3_stale.XXXXXX`"
+    naked_file="`basename $file`"
+    s3cmd get "$s3_bucket:$s3_key/$naked_file" $tempfile
+    if [ $? -gt 0 ]; then
+      $rc=1
+      $error_text="Failed to fetch $file from s3 for comparison"
+    fi
+
+    # Compare checksums of the files
+    local_md5sum="`md5sum $etc_plafish/$file | cut -f 1 -d \" \"`"
+    remote_md5sum="`md5sum $tempfile | cut -f 1 -d \" \"`"
+
+    if [ $local_md5sum != $remote_md5sum ]; then
+      $rc=1
+      $error_text="Local and s3 checksums for $file differ."
+    fi
+
+    rm -f $tempfile
+  done
+
+  add_alert "generatenames_is_stale_in_s3" "$rc" "$error_text"
+
+}

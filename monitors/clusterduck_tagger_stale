@@ -1,0 +1,48 @@
+#!/bin/bash
+# control scripts for 'tagger.rb' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+clusterduck_tagger_stale_valid_monitor() {
+    if [ "`hostname`" = 'live-clusterduck-web00' ]; then
+      return 0
+    else
+      return 1
+    fi
+}
+
+clusterduck_tagger_stale_alerts() {
+#pf_control to monitor tagger script is running on the clusterduck instance to ensure we are tagging amamzon instances for billing purposes.
+ 
+local rc=0
+local error_text="Everything is fine"
+local lockFiles="/tmp/generatenames*.db.lck"
+local timenow="`date +\"%s\"`"
+local modified_time
+# moving to 2 hours as the tagger process only runs every 2 hours
+local stale_threshold=7200
+local 
+
+# For each /tmp/generatenames_*.db.lck file, check that it is not stale locally
+  for file in `ls $lockFiles`; do
+    modified_time="`stat --printf %Y $file`"
+
+    if [ $(($timenow - $modified_time)) -gt $stale_threshold ]; then
+      error_text="$file on `hostname` is older than $stale_threshold seconds"
+      rc=1
+add_alert "clusterduck_tagger_stale" "$rc" "$error_text"
+    fi
+
+  done
+
+#add_alert "clusterduck_tagger_stale" "$rc" "$error_text"
+
+
+
+
+
+}
+

@@ -1,0 +1,29 @@
+#!/bin/sh
+
+warn=$1
+crit=$2
+
+i=$(vnstat -tr)
+
+rx=$(echo $i | grep -o "rx [[:digit:]]*\.[[:digit:]]* kB/s")
+tx=$(echo $i | grep -o "tx [[:digit:]]*\.[[:digit:]]* kB/s")
+
+status="$rx $tx"
+
+rx1=$(echo $rx | awk '{ print $2 }' | awk -F\. '{ print $1 }')
+tx1=$(echo $tx | awk '{ print $2 }' | awk -F\. '{ print $1 }')
+
+if (( $warn <= $rx1 )) || (( $warn <= $tx1 ))
+then
+  if (( $crit <= $rx1 )) || (( $crit <= $tx1 ))
+  then
+    echo "$status|rx=${rx1}KB;${warn};${crit};0;0 tx=${tx1}KB;${warn};${crit};0;0"
+    exit 2
+  else
+    echo "$status|rx=${rx1}KB;${warn};${crit};0;0 tx=${tx1}KB;${warn};${crit};0;0"
+    exit 1
+  fi
+else
+  echo "$status|rx=${rx1}KB;${warn};${crit};0;0 tx=${tx1}KB;${warn};${crit};0;0"
+  exit 0
+fi

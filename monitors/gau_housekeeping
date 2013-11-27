@@ -1,0 +1,46 @@
+#!/bin/bash
+# control scripts for 'gau_housekeeping' monitor - mawalsh
+# Checks the objects involved in gau process.
+# Cat in status from file created by cronjob 'gau_hk.sh'
+
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+gau_housekeeping_valid_monitor() {
+ 
+  CHECK_HOSTNAME=`hostname | egrep "^live-(risk|madden|nhlstars|fifa|simcity|falafel|pets|kiwi|simssoc)-dbu[0-9]{2,3}(s)$" | egrep -v "^live-pets-dbu[0][0-2]s$"`
+  if [ -z "$CHECK_HOSTNAME" ]
+  then
+	return 1
+  fi
+  return 0
+
+}
+
+gau_housekeeping_alerts() {
+
+  # Added extra status files to loop through
+
+  STATUSFILE0="/home/monitor/.cache/insert_gauhistory_status"
+  STATUSFILE1="/home/monitor/.cache/rotate_gaucheck_status"
+  STATUSFILE2="/home/monitor/.cache/archive_gaucheck_status"
+  #STATUSFILE3="/home/monitor/.cache/insert_gauhistory_status"
+  STATUSFILE4="/home/monitor/.cache/check_gaucheck_status"
+  STATUSFILE5="/home/monitor/.cache/create_gaucheck_status"
+  LOCKFS="/home/monitor/.cache/gau_lockfile_status"
+
+  for F in $STATUSFILE0 $STATUSFILE1 $STATUSFILE2 $STATUSFILE4 $STATUSFILE5 $LOCKFS
+  do
+  	if [ -e "$F" ]
+  	then
+		OUTPUT=`cat $F | awk -F":" '{print $1" "$2" "$3}'`
+
+		## Output results to pfcontrol
+		add_alert $OUTPUT
+		#echo $OUTPUT
+  	fi
+  done
+}

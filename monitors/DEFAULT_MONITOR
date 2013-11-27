@@ -1,0 +1,32 @@
+#!/bin/bash
+# control scripts for 'billing' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+DEFAULT_MONITOR_valid_monitor() {
+    return 0
+}
+
+DEFAULT_MONITOR_alerts() {
+  ### The default test - always returns true ###
+  add_alert "monitoring_bootstrap" 0
+
+  #### Self test to gather diagnostics if end to end process takes longer than 5 minutes to run
+  CACHE='/home/monitor/.cache/alerts'
+  DEFAULT_DELAY=$((`date +"%s"` - `stat -c "%Y" $CACHE`))
+
+  DEFAULT_DATE=`date '+%Y%m%d'`
+  DEFAULT_DATE_TIME=`date '+%Y-%m-%d %H-%M-%S'`
+
+  if [[ $DEFAULT_DELAY -gt 400 ]]; then
+    echo "DELAY: $DEFAULT_DELAY" >> /tmp/pfcontrol-$DEFAULT_DATE.log
+    echo "TIME: $DEFAULT_DATE_TIME" >> /tmp/pfcontrol-$DEFAULT_DATE.log
+    ps -efww >> /tmp/pfcontrol-$DEFAULT_DATE.log
+    echo "-------------------------" >> /tmp/pfcontrol-$DEFAULT_DATE.log
+  fi
+
+}
+

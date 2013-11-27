@@ -1,0 +1,92 @@
+#!/bin/bash
+# control scripts for 'stats_self_test' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+STATS_SELFTEST_LOCKFILE=$HOME/locks/stats_self_test.lock
+
+stats_self_test_valid_component() {
+   CHECK_HOSTNAME=`hostname | grep -Po "live-stats-app00"`
+
+   if [[ -z $CHECK_HOSTNAME ]]; then
+      return 1;
+   fi
+   return 0
+
+}
+
+
+stats_self_test_start() {
+  return 0
+}
+
+stats_self_test_stop() {
+  return 0
+}
+
+stats_self_test_status() {
+  pid="`ps -u sysops -www -o'pid cmd' 2>/dev/null | grep [s]elftest |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+  LASTLOG=`ls /home/sysops/logs/stats_self_test* | tail -1`
+  if [ -n "$LASTLOG" ];then
+    MESSAGE="Last run: $((`date +"%s"` - `stat -c "%Y" $LASTLOG`)) Seconds ago"
+  fi
+  if [ -f $STATS_SELFTEST_LOCKFILE ]; then
+     return 0
+  fi
+  return 1
+}
+
+stats_self_test_offline() {
+  return 0
+}
+
+stats_self_test_online() {
+  return 0
+}
+
+stats_self_test_alerts() {
+
+  ### Check no errors were reported ###
+  RC=0
+  if stats_self_test_status; then
+    LASTLOG=`ls /home/sysops/logs/stats_self_test* | tail -2 | head -n 1`
+  else
+    LASTLOG=`ls /home/sysops/logs/stats_self_test* | tail -1`
+  fi
+  tail -2 $LASTLOG | grep -q "No errors reported" || RC=2
+  add_alert "stats_self_test_errors" $RC
+
+  ### Check we've not been running for too long ###
+  RC=0
+  DELAY=0
+  if [ -e $STATS_SELFTEST_LOCKFILE ]; then
+    DELAY=$((`date +"%s"` - `stat -c "%Y" $STATS_SELFTEST_LOCKFILE`))
+    if [[ $DELAY -gt 14400 ]];then
+      RC=1
+    fi
+  fi
+  add_alert "stats_self_test_stuck" $RC $DELAY
+
+}
+
+stats_self_test_personal_alerts() {
+#do some shit...
+return 1
+
+}
+
+stats_self_test_tidy() {
+  return 0
+}
+
+stats_self_test_rotate() {
+  return 0
+}
+
+stats_self_test_build() {
+  return 0
+}
+

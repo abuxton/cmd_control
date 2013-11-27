@@ -1,0 +1,129 @@
+#!/bin/bash
+# $Id: s3_archiver 7341 2013-03-26 13:18:02Z pfcallison $
+# control scripts for 's3_archiver' component
+
+S3_ARCHIVER_LOCKFILE="/home/sysops/locks/archive2s3.lck"
+
+#These values should be replaced by a key specific to monitoring that can read and get as necessary on all buckets and the keys should be defined in pfcontrol, or a config file
+AWS_ACCESS_KEY_ID=AKIAIUOIYWWH3HK6FDAQ
+AWS_SECRET_ACCESS_KEY=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
+shard="shard`hostname | awk -F\- '{print $3}' | cut -c4,5`"
+export AWS_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+s3_archiver_valid_component() {
+
+  CHECK_HOSTNAME=`hostname | egrep "(live-event-dbc[0-9]+r1|live-[a-z]+-dbe[0-9]+r1)"`
+  if [[ -z $CHECK_HOSTNAME ]]; then
+     return 1;
+  fi
+
+  return 0
+
+}
+
+s3_archiver_start() {
+  return 0
+}
+
+s3_archiver_stop() {
+  return 0
+}
+
+s3_archiver_status() {
+  pid="`ps -u sysops -www -o'pid cmd' 2>/dev/null | grep [a]rchive2s3.sh |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+  LASTLOG=`ls -rt /home/sysops/logs/archive2s3-*.log | tail -1`
+  if [ -n "$LASTLOG" ];then
+    MESSAGE="Last run: $((`date +"%s"` - `stat -c "%Y" $LASTLOG`)) Seconds ago"
+  fi
+  if [ -f /etc/playfish/pfcontrol/s3_archiver.status ] ; then
+    MESSAGE="OFFLINE: $MESSAGE" 
+  fi
+  if [ -f $S3_ARCHIVER_LOCKFILE ] && [ -n "$pid" ]; then
+     return 0
+  fi
+  return 2
+}
+
+#am beginning to think online and offline should be generic functions in the master pfcontrol script and we should enforce some standards for them
+s3_archiver_offline() {
+  echo "offline" > /etc/playfish/pfcontrol/s3_archiver.status
+  return 0
+}
+
+s3_archiver_online() {
+  rm /etc/playfish/pfcontrol/s3_archiver.status > /dev/null 2>&1
+  return 0
+}
+
+
+s3_archiver_alerts() {
+
+  ### we need to perform the following checks
+
+  #If we're offline, return a WARN only
+  if [ -f /etc/playfish/pfcontrol/s3_archiver.status ] ; then
+    add_alert s3_archiver_status 1 `cat /etc/playfish/pfcontrol/s3_archiver.status`
+  return 0
+  fi
+
+# Local variables
+   local configuration_version="1"
+   local configuration_root="/home/sysops/conf"
+   local configuration_name="archive2s3.conf"
+   local statusFile="s3_archiver_status"
+#read the config file
+   source "${configuration_root}/${configuration_name}" > /dev/null 2>&1
+  ### Check lock file to ensure we're not stuck #####
+  RC=2
+  if [ -r "/home/sysops/locks" ];then
+    if [ -f "/home/sysops/locks/archive2s3.lck" ];then
+      s3_archiver_status
+      RC=$?
+    else
+      RC=0
+    fi
+  fi
+
+  add_alert s3_archiver_locked $RC
+
+  ### check s3 to ensure data is current ###
+  RC=2
+  event="`hostname | awk -F\- '{print $2}'``hostname | awk -F\- '{print $3}' | cut -c4,5`"
+  bucketpath=$(eval "echo \$$event")
+  /usr/bin/s3cmd get analytics.playfish.com:${bucketpath}/`hostname`_status /tmp/${statusFile} > /dev/null 2>&1
+  ARCHIVE_TIME=0
+  if [ -e /tmp/${statusFile} ] && [ "`grep lastlogid /tmp/${statusFile} > /dev/null 2>&1; echo $?`" -eq 0 ]; then
+    DATE_STRING=`cat /tmp/s3_archiver_status | head -n 1 | tr -d "#"`
+    ARCHIVE_TIME=`date --date "$DATE_STRING" +"%s"`
+
+    if [[ $((`date +%s` - $ARCHIVE_TIME)) -lt 2400 ]];then
+        RC=0
+    fi
+  fi
+
+  add_alert s3_archiver_delay $RC $((`date +%s` - $ARCHIVE_TIME))
+
+}
+
+s3_archiver_personal_alerts() {
+return 0
+
+}
+
+s3_archiver_tidy() {
+  return 0
+}
+
+s3_archiver_rotate() {
+  return 0
+}
+
+s3_archiver_build() {
+  return 0
+}

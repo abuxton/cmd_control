@@ -1,0 +1,239 @@
+#!/bin/bash
+# $Id: binlog_backup 7135 2013-01-22 13:15:02Z pfcallison $
+# Check that MySQL binlog backups are working
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+get_server_relation() {
+	if [ -f '/var/spool/playfish/meta-data/server_relation' ]; then
+		server_relation="`cat /var/spool/playfish/meta-data/server_relation`"
+	elif [ -f '/var/spool/playfish/meta-data/INSTALL_VARS' ]; then
+		source /var/spool/playfish/meta-data/INSTALL_VARS
+		server_relation=$SERVER_RELATION
+	fi
+
+	if [ -z $server_relation ]; then
+		echo ""
+	else
+		echo $server_relation
+	fi
+}
+
+get_server_service() {
+	if [ -f '/var/spool/playfish/meta-data/server_service' ]; then
+		server_service="`cat /var/spool/playfish/meta-data/server_service`"
+	elif [ -f '/var/spool/playfish/meta-data/INSTALL_VARS' ]; then
+		source /var/spool/playfish/meta-data/INSTALL_VARS
+		server_service=$SERVER_SERVICE
+	fi
+
+	if [ -z $server_service ]; then
+		echo ""
+	else
+		echo $server_service
+	fi
+}
+
+get_server_servicetype() {
+	if [ -f '/var/spool/playfish/meta-data/server_servicetype' ]; then
+		server_servicetype="`cat /var/spool/playfish/meta-data/server_servicetype`"
+	elif [ -f '/var/spool/playfish/meta-data/INSTALL_VARS' ]; then
+		source /var/spool/playfish/meta-data/INSTALL_VARS
+		server_servicetype=$SERVER_SERVICETYPE
+	fi
+
+	if [ -z $server_servicetype ]; then
+		echo ""
+	else
+		echo $server_servicetype
+	fi
+}
+
+binlog_backup_valid_component() {
+	
+	if [ "$(get_server_relation)" != 's' ]; then
+		return 1
+	fi
+	#live_games=( fifa madden mlbstars nhlstars pets risk www couponweb crm cheetah billingads console directory email coupon campaign billingads playfish rewards simssoc sonar simssocweb stats )
+	
+
+	excluded_service=( letters scsletters scsbilling adw event falafelletters chef achef bchef )
+	excluded_game=( petsbb petsms brain survivors )
+	excluded_hosts=( live-pets-dbc00s live-console-dbc00s live-risk-dbc00s live-www-dbu00s live-pets-dbk00s live-chef-cdb100s live-campaign-dbc00s live-www-dbu00s live-kiwi-dbc00s )
+
+	
+	service="$(get_server_service)"
+
+	# Exclude the Pets Kafe hosts until we revisit them
+	servicetype="$(get_server_servicetype)"
+	if [ $servicetype = 'k' ]; then
+		return 1
+	fi
+
+	for i in "${excluded_hosts[@]}"; do
+		if [ "`hostname`" = $i ]; then
+			return 1
+		fi
+	done
+
+	# excluded services 
+	for i in "${excluded_service[@]}"
+	do
+		if [ "$i" == "$service" ] ; then
+			return 1
+		fi
+	done
+
+	# excluded games
+	for i in "${excluded_game[@]}"
+	do
+		if [ "$i" == "$service" ] ; then
+			return 1
+		fi
+	done
+
+	# commented out but kept for fullness and so can be rolled back if at issue
+	#for i in "${live_games[@]}"
+	#do
+	#	if [ "$i" == "$service" ] ; then
+	#		return 0
+	#	fi
+	#done
+	#return 1
+return 0
+
+}
+
+binlog_backup_alerts(){
+	
+	status_file="/home/monitor/.cache/binlog_backup.status"
+	fatal_file="/home/monitor/.cache/binlog_backup.fatal"
+
+    # OPS-22643 callison
+    missing_file="/home/monitor/.cache/binlog_backup.missing"
+    # reset the missing file
+    cat /dev/null >$missing_file
+    #
+
+	if [ -f "/mnt/binlog_backup.pid" ]; then
+		msg="binlog_backups_in_progress"
+		RC=0
+	else
+		if [ -f $status_file ]; then
+			value=`cat $status_file`
+			RC=$value
+			
+			case $value in
+				0)
+					msg="binlog_backups_OK"
+				;;
+				1)
+					msg="binlog_backups_lock_file_stale_may_attempt_recovery"
+				;;
+				2)
+					msg="binlog_backups_lock_file_stale_proc_killed_and_retrying"
+                    # setting to be a warning not critical
+                    RC=1
+				;;
+				*)
+					msg="binlog_backups_unknown"
+				;;
+			esac
+		else
+			msg="binlog_backups_binlog_backup.status_file_not_found"
+			RC=1
+		fi
+		
+		AWS_KEY=`grep aws_key= /opt/playfish/etc/sysconfig/check_s3_backup.ini | cut -d = -f 2`
+		AWS_SECRET=`grep aws_secret= /opt/playfish/etc/sysconfig/check_s3_backup.ini | cut -d = -f 2`
+		AWS_BUCKET=`grep backupBucket= /opt/playfish/etc/sysconfig/check_s3_backup.ini | cut -d = -f 2`
+		
+		files=( `AWS_ACCESS_KEY_ID=$AWS_KEY AWS_SECRET_ACCESS_KEY=$AWS_SECRET s3cmd list ${AWS_BUCKET}:binlogs/$(hostname)/$(hostname)-$(date +%Y%m%d)-binlogs/ 1500 | egrep -v -- '^-+$' | awk -F / '{print $NF}'` )
+		file_count=${#files[@]}
+		
+		if [ $file_count -gt 0 ]; then
+			last_file=${files[${#files[*]}-1]}
+		fi
+		
+		# If we have some files to compare...
+		if [ ! -z $last_file ]; then
+			
+			missing_binlogs=0
+			
+			# Loop through the array backwards, look for a difference of >1 between file numbers
+			for ((i=${#files[@]}-1; i>=0; i--)); do
+				file=${files[$i]}
+				v=`echo $file | awk -F. '{print $NF}' | sed -r 's/^0+//g'`
+				
+				if [ ! -z $pv ]; then
+					missing=$(($pv - $v - 1))
+					if [ $missing -gt 0 ]; then
+
+                        # OPS-22643 callison
+                        tv=$(( v + 1 ))
+                        tpv=$(( pv -1 ))
+                        if [ $tv -eq $tpv ]
+                        then
+                            missmsg=$tv
+                        else
+                            missmsg="${tv}-${tpv}"
+                        fi
+                        echo $missmsg >>$missing_file
+                        #
+
+						missing_binlogs=$(($missing_binlogs + $missing))
+					fi	
+				fi
+				pv=$v
+			done
+			
+			if [ $missing_binlogs -gt 0 ]; then
+				msg="binlog_backups_s3_unreconciled_suspect_${missing_binlogs}_binlogs_missing"
+# setting this to warn rather than critical
+# per OPS-23551
+				# RC=2
+				RC=1
+			fi
+		
+		else
+		 	# Do we expect to have some binlogs yet?
+			# Not if it's a new day and the binlog_backup.sh hasn't run yet!
+			interval=`grep /usr/local/bin/binlog_backup.sh /etc/cron.d/pf_binlog_backup | awk '{print $1}' | cut -d / -f 2-`
+			
+			# Add on 5 minutes to give binlog_backup.sh time to complete
+			interval=$(($interval + 5))
+			
+			interval=$(($interval * 60))
+			
+			# UNIX epoch at midnight today
+			midnight=`date -d "$(date +%Y)/$(date +%m)/$(date +%d) 00:00:00" "+%s"`
+			
+			since=$(($midnight + $interval))
+			
+			now=`date +%s`
+			
+			if [ $now -gt $since ]; then
+				# We should have some binlogs - raise the alarm
+				# msg="binlog_backups_s3_unreconciled_suspect_9999_binlogs_missing"
+                msg="binlog_backups_no_binlogs_yet_today_but_there_should_be_THIS_IS_NOT_A_DRILL"
+				RC=1
+			else
+				# We don't expect to have any binlogs yet
+				msg="binlog_backups_no_binlogs_yet_today_which_is_fine"
+				RC=0
+			fi
+		fi
+	fi
+	
+	# If this file is present, there's a big problemo
+	if [ -f $fatal_file ]; then
+		msg="binlog_backups_fatal_error_requires_investigation"
+		RC=2
+	fi
+	
+	add_alert "binlog_backups" $RC $msg
+}
+

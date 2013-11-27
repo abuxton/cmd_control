@@ -1,0 +1,29 @@
+#!/bin/bash
+
+now=$(date +%s)
+filedate=$(stat -c%Z /tmp/offline_shards-`date +%Y%m%d` 2> /tmp/foo)
+
+if [ -e /tmp/offline_shards-`date +%Y%m%d` ]
+then
+    if [ $(expr $now \- $filedate) -lt 8000 ]
+    then exit 0
+    fi
+else
+    for i in `s3cmd ls s3://playfish_global_config/maintenance/|grep offline-shards|grep ' 2 ' || grep ' 4 ' || grep ' 6 ' || grep ' 8 '` ; do echo $i ; done >> /tmp/offline_shards-`date +%Y%m%d`
+fi
+
+sharddate=$(date --date `cat /tmp/offline_shards-$(date +%Y%m%d)| head -n 1` +%s)
+
+[ `expr $now \- $sharddate` -gt 7200 ]
+if [ `echo $?` -ne 0 ]
+    then
+        exit 0
+    else
+        for i in `cat /tmp/offline_shards-$(date +%Y%m%d) | grep offline | cut -d '/' -f 5`
+        do
+	    count=$(cat /tmp/offline_shards-$(date +%Y%m%d) | grep offline | wc -l)
+            echo "SHARD CRITICAL - $count or more shard(s) have been offline for >2 hrs." | uniq
+        done
+fi
+exit 2
+

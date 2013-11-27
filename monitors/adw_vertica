@@ -1,0 +1,95 @@
+#!/bin/bash
+
+# control scripts for 'billing' component
+# $Id: adw_vertica 7347 2013-03-27 08:13:29Z pfcallison $
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+cca_DBUSER=monitor
+cca_DBPASS=pfmon
+cca_FLOOR=20
+cca_HIGH=35
+cca_DBNUM=$RANDOM
+let "cca_DBNUM %= $cca_HIGH"
+while [ $cca_DBNUM -lt $cca_FLOOR ]
+do
+    cca_DBNUM=$RANDOM
+    let "cca_DBNUM %= $cca_HIGH"
+done
+cca_DBHOST=live-adw-dbw${cca_DBNUM}
+
+adw_vertica_valid_monitor() {
+    # vertica has been retired, don't run anymore
+    return 1
+    # check we are an adw app server
+    CHECK_HOSTNAME=`hostname | grep -Po "live-adw-app\d\d"`
+    if [[ -z $CHECK_HOSTNAME ]]
+    then
+	return 1
+    else
+	return 0
+    fi
+}
+
+adw_vertica_alerts() {
+  adw_sql_nodes_alive
+  adw_sql_ksafety
+  adw_sql_diskspace
+  adw_sql_critical
+}
+
+adw_sql () {
+    if [ ! -z $1 ]
+    then
+	ccaoutput=$(vsql -h ${cca_DBHOST} -U ${cca_DBUSER} -w ${cca_DBPASS} -t -c "$1")
+    fi
+    echo $ccaoutput
+}
+
+adw_sql_nodes_alive () {
+    ccasql="select count(*)  from nodes where node_state <> 'UP';"
+    ret=`adw_sql $ccasql`
+    if [ -z $ret ]
+    then
+	add_alert "V_Nodes_not_UP" 0
+    else
+	ccasql="select node_name, node_address, node_state from nodes where node_state <> 'UP';"
+	ret=`adw_sql $ccasql |awk 'BEGIN {FS="|"; ORS="|"};{print "Node:"$1"_State:"$3"_Address:"$2}'`
+	add_alert "V_Node_Not_UP" 1 $ret
+    fi
+}
+adw_sql_ksafety () {
+    ccasql="select count(*) from system where current_fault_tolerance <> designed_fault_tolerance;"
+    ret=`adw_sql $ccasql`
+    if [ -z $ret ]
+    then
+	add_alert "k-safety_check" 0
+    else
+	ccasql="select current_fault_tolerance, designed_fault_tolerance from system where current_fault_tolerance <> designed_fault_tolerance;"
+	ret=`adw_sql $ccasql |awk 'BEGIN {FS="|"};{print "Current_Fault_Tolerance:"$1"_Designed_Fault_Tolerance:"$2}'`
+	add_alert "k-safety_check" 1 $ret
+    fi
+}
+adw_sql_diskspace () {
+    ccasql="select node_name, storage_path, storage_usage, case when substr(disk_space_free_percent,3,1) = '%' then left(disk_space_free_percent,2) when substr(disk_space_free_percent,2,1) = '%' then left(disk_space_free_percent,1) end as disk_space_free_percent from disk_storage where case when substr(disk_space_free_percent,3,1) = '%' then left(disk_space_free_percent,2) when substr(disk_space_free_percent,2,1) = '%' then left(disk_space_free_percent,1) end < 40;"
+    ret=`adw_sql $ccasql`
+    if [ -z $ret ]
+    then
+	add_alert "V_disk_space" 0
+    else
+	add_alert "V_disk_space" 1 `echo $ret|awk 'BEGIN {FS="|"};{print "Node:"$1"_Path:"$2"_Usage:"$3}'`
+    fi
+}
+adw_sql_critical () {
+    ccasql="SELECT * FROM V_MONITOR.CRITICAL_NODES;"
+    ret=`adw_sql $ccasql`
+    if [ -z $ret ]
+    then
+	add_alert "V_CRITICAL_NODES" 0
+    else
+	add_alert "V_CRITICAL_NODES" 1 `echo $ret|awk 'BEGIN {FS="|"};{print "Node:"$1"_Path:"$2"_Usage:"$3}'`
+    fi
+}

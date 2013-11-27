@@ -1,0 +1,33 @@
+#!/bin/bash
+# control scripts for 'fifa_game' component
+
+#Example of a monitor that can be game specific
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+fifa_game_valid_monitor() {
+ 
+  return 1
+
+  is_deployed "com.playfish.fb.fifa.FifaGame"
+  return $?
+}
+
+fifa_game_alerts() {
+
+  ### test pf application status via JMX ###
+  RC=1
+  RESPONSE=`java -jar /opt/playfish/snmp/lib/cmdline-jmxclient-0.10.3.jar - 127.0.0.1:17264 "STATUS:name=com.playfish.system.status,type=status" Status 2>&1 | head -n 1`
+  if [ `echo "$RESPONSE" | grep -Po "pfstatus:.*"` ]; then
+     RESPONSE=`echo "$RESPONSE" | grep -Po "pfstatus:.*" | cut -d ":" -f 2`
+        if [ "$RESPONSE" == "ALIVE" ];then
+          RC=0
+#          RESPONSE=""
+        fi
+  fi
+  add_alert "fifa_game_status" $RC "$RESPONSE"
+
+}

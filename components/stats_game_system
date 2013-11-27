@@ -1,0 +1,92 @@
+#!/bin/bash
+# control scripts for 'stats_game_system' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+STATS_GAME_SYSTEM_LOCKFILE=/home/sysops/locks/stats_game_system.lock
+STATS_GAME_SYSTEM_DATE=`/bin/date -d "yesterday" +"%Y-%m-%d"`
+
+stats_game_system_valid_component() {
+
+  CHECK_HOSTNAME=`hostname | grep -Po "live-stats-app\d\d"`
+
+  if [[ -z $CHECK_HOSTNAME ]]; then
+     return 1;
+  fi
+  return 0
+
+}
+
+stats_game_system_start() {
+  return 0
+}
+
+stats_game_system_stop() {
+  return 0
+}
+
+stats_game_system_status() {
+  pid="`ps -u sysops -www -o'pid cmd' 2>/dev/null | grep [S]tatsGameSystem |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+  LASTLOG=`ls /home/sysops/logs/get_counts* | tail -1`
+  if [ -n "$LASTLOG" ];then
+    MESSAGE="Last run: $((`date +"%s"` - `stat -c "%Y" $LASTLOG`)) Seconds ago"
+  fi
+  if [ -f $STATS_GAME_SYSTEM_LOCKFILE ]; then
+     return 0
+  fi
+  return 1
+}
+
+stats_game_system_offline() {
+  return 0
+}
+
+stats_game_system_online() {
+  return 0
+}
+
+stats_game_system_alerts() {
+  ### Check data in DB is up to date #####
+  RC=1
+  COUNT=`mysql --connect_timeout=30 -h live-stats-dbc00m.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select count(*) from stats_game_system where date = '$STATS_GAME_SYSTEM_DATE'"`
+  if [ $? -ne 0 ];then
+    add_alert "stats_game_system_mysql_error" 1
+  else
+    if [ "$COUNT" -ne 0 ]; then
+      RC=0
+    fi
+    add_alert "stats_game_system_broken" $RC  
+  fi
+
+  ### Check we've not been running for too long ###
+  RC=0
+  DELAY=0
+  if [ -e $STATS_GAME_SYSTEM_LOCKFILE ]; then
+    DELAY=$((`date +"%s"` - `stat -c "%Y" $STATS_GAME_SYSTEM_LOCKFILE`))
+    if [[ $DELAY -gt 14400 ]];then
+      RC=1
+    fi
+  fi
+  add_alert "stats_game_system_stuck" $RC $DELAY
+}
+
+stats_game_system_personal_alerts() {
+return 0
+
+}
+
+stats_game_system_tidy() {
+  return 0
+}
+
+stats_game_system_rotate() {
+  return 0
+}
+
+stats_game_system_build() {
+  return 0
+}
+

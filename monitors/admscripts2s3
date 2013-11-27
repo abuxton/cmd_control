@@ -1,0 +1,39 @@
+#!/bin/bash
+# monitorsc scripts for the 'admscripts2s3' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+admscripts2s3_valid_monitor() {
+    if [ "`hostname`" = 'live-ops-cmd01' ]; then
+	return 0
+    else
+	return 1
+    fi
+}
+
+admscripts2s3_alerts() {
+  # Local variables
+  local filepath="s3://config.playfish.com/admscripts.tar.gz"
+  local currenthour
+  local filehour
+  local difference
+  local rc
+
+  # Attempt to grab the datestamp from s3 and compare. Alert on any lag over 2 hours (value of 2 allows
+  # us to disregard 24 hour time value wrap).
+  currenthour="`date +%H`"
+  filehour="`s3cmd ls $filepath | cut -f 2 -d ' ' | cut -f 1 -d ':'`"
+
+  difference=$((currenthour-$filehour))
+
+  rc=0
+  if [ $difference -gt "2" ]; then
+  	rc=1
+  fi
+
+  add_alert "admscripts2s3" $rc "admscripts2s3 tarball is more than 2 hours old. Check $filepath"
+
+}

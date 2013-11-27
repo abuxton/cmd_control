@@ -1,0 +1,53 @@
+#!/bin/bash
+# control scripts for 'update_playfish_bin' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+UPFB=/home/monitor/.cache/update_playfishbin_check.status
+UPFBLOG=/home/monitor/.cache/update_playfishbin_check.log
+
+update_playfish_bin_valid_monitor() {
+  #always run
+  return 0
+}
+
+update_playfish_bin_alerts() {
+
+  ### check lock file is not stale
+  RC=0
+  DELAY=0
+  if [[ -e /var/run/playfishbin.lck ]];then
+    DELAY=$((`date +"%s"` - `stat -c "%Y" /var/run/playfishbin.lck`))
+    if [[ $DELAY -gt 7200 ]];then
+      RC=1
+    fi
+  fi
+  add_alert "update_playfish_bin_stuck" $RC $DELAY
+
+  ### check .svn dir was updated recently, except on Chef-managed hosts
+  ### where this check is redundant. See basenode::repositories.
+  if [ -z "`which chef-client 2>/dev/null`" ]; then
+#     RC=1
+#     DELAY=0
+#     if [[ -e /opt/playfish/.svn ]];then
+#       DELAY=$((`date +"%s"` - `stat -c "%Y" /opt/playfish/.svn`))
+#       if [[ $DELAY -lt 3600 ]];then
+#         RC=0
+#       fi
+#     fi
+#
+#     changed to read the status file created by the updated
+#     update playfish bin shell script
+    DELAY=
+    RS=`cat $UPFB`
+    if [ ! "$RS" = "0" ]
+    then
+        RC=1
+        DELAY="Read_${UPFBLOG}_for_more_details."
+    fi
+    add_alert "update_playfish_bin_broken" $RC $DELAY
+  fi
+}

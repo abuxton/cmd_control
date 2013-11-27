@@ -1,0 +1,87 @@
+#!/bin/bash
+# control scripts for 'get_pfcash' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+GET_PFCASH_DATE=`/bin/date -d "3 hours ago" +"%Y-%m-%d"`
+
+get_pfcash_valid_component() {
+
+  return 1
+
+  CHECK_HOSTNAME=`hostname | grep -Po "live-stats-app\d\d"`
+  if [[ -z $CHECK_HOSTNAME ]]; then
+     return 1;
+  fi
+
+}
+
+get_pfcash_start() {
+  return 0
+}
+
+get_pfcash_stop() {
+  return 0
+}
+
+get_pfcash_status() {
+     return 0
+}
+
+get_pfcash_offline() {
+  return 0
+}
+
+get_pfcash_online() {
+  return 0
+}
+
+get_pfcash_alerts() {
+  ### Check data in DB is up to date #####
+  for COLUMN in pfcash `mysql --connect_timeout=30 -h live-stats-dbc00m.internal.playfish.com -u stats -ptsfesqrb stats -ss -B -e "select name from ops_games"`; do
+  if [ $? -ne 0 ];then
+    add_alert "get_pfcash_mysql_broken" 1 
+  fi
+
+  RC=1
+  COUNT=`mysql --connect_timeout=30 -h live-stats-dbc00m.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select count(*) from ops_gamecash where date = '$GET_PFCASH_DATE' and $COLUMN is NOT NULL" 2>/dev/null`
+  if [ $? -ne 0 ];then
+    C_COUNT=`mysql --connect_timeout=30 -h live-stats-dbc00m.internal.playfish.com -u stats -ptsfesqrb information_schema -ss -B -e "select count(*) from COLUMNS where TABLE_NAME = 'ops_gamecash' and COLUMN_NAME = '$COLUMN'" 2>/dev/null`
+    if [ $? -ne 0 ];then
+      add_alert "get_pfcash_mysql_broken" 1
+    else
+      if [ $C_COUNT -eq 0 ];then
+        add_alert "get_pfcash_missing_column" 1 $COLUMN
+      else
+        add_alert "get_pfcash_unknown_error" 1 $COLUMN
+      fi
+    fi
+  else
+    if [ "$COUNT" -ne 0 ]; then
+      RC=0
+    fi
+    add_alert "get_${COLUMN}_cash_broken" $RC  
+  fi
+  done
+}
+
+get_pfcash_personal_alerts() {
+return 0
+
+}
+
+get_pfcash_tidy() {
+  return 0
+}
+
+get_pfcash_rotate() {
+  return 0
+}
+
+get_pfcash_build() {
+  return 0
+}
+

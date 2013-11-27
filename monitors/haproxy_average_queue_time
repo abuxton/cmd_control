@@ -1,0 +1,32 @@
+#!/bin/bash
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+haproxy_average_queue_time_valid_monitor() {
+
+    CHECK_HOSTNAME=`hostname | egrep  "lb[0-9]+$"`
+    if [[ -z $CHECK_HOSTNAME ]]
+    then
+	return 1
+    else
+	return 0
+    fi
+
+}
+
+haproxy_average_queue_time_alerts() {
+
+	DATA=""
+	
+	FILE="/tmp/gauge-average_queue_time"
+	
+	if [ -f $FILE ]; then
+		DATA=`cat $FILE`
+	fi
+	
+	add_alert "average_queue_time" 0 $DATA
+	
+}

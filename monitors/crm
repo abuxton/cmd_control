@@ -1,0 +1,56 @@
+#!/bin/bash
+# control scripts for 'crm' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+crm_valid_monitor() {
+ 
+    return 1
+
+    #not sure at the moment if these tests should go in game specific files, or their own files, so here for now. Should be run on crm app/DB node.
+    CHECK_HOSTNAME=`hostname | grep -Po "live-stats-app\d\d"`
+
+    if [[ -z $CHECK_HOSTNAME ]]; then
+       return 1;
+    fi
+    return 0
+}
+
+crm_alerts() {
+
+
+  ## Check to see if we have enough data in the database to perform a valid test ###
+  for GAME in `mysql --connect_timeout=30 -h live-stats-dbc00s.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select distinct game from crm_requests_sum where game not like '\_%'"`; do
+#     if [[ "$GAME" == "empire" ]] || [[ "${GAME}" == "farm" ]];then
+     if [[ "${GAME}" == "farm" ]];then
+	CRM_DATE=`date -d "32 hours ago" "+%Y-%m-%d"`
+     else
+	CRM_DATE=`date -d "12 hours ago" "+%Y-%m-%d"`
+     fi
+     ERRORS=""
+     RC=0
+
+     for KEY in `mysql --connect_timeout=30 -h live-stats-dbc00s.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select distinct req_group from crm_requests where game = '$GAME'"`; do
+	COUNT=`mysql --connect_timeout=30 -h live-stats-dbc00s.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select count(*) from crm_table where group_id = '$KEY' and date >= '$CRM_DATE'"`
+#	echo "$GAME $KEY $COUNT $CRM_DATE"
+	if [[ $COUNT -eq 0 ]];then
+	 RC=1
+	 ERRORS="${ERRORS} $KEY"
+	fi
+     done
+     for KEY in `mysql --connect_timeout=30 -h live-stats-dbc00s.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select distinct req_group from crm_requests_sum where game = '$GAME'"`; do
+	COUNT=`mysql --connect_timeout=30 -h live-stats-dbc00s.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select count(*) from crm_table where group_id = '$KEY' and date >= '$CRM_DATE'"`
+	if [[ $COUNT -eq 0 ]];then
+	 RC=1
+	 ERRORS="${ERRORS} $KEY"
+	fi
+     done
+
+  add_alert "crm_${GAME}_broken" $RC 
+
+  done
+
+}

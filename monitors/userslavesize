@@ -1,0 +1,59 @@
+#!/bin/bash
+# control scripts for 'userslavesize' component
+#
+# blame: chris.allison@playfish.com
+# version: 1.0
+# svn: $Id: userslavesize 7224 2013-02-08 14:30:18Z pfbashton $
+#
+# this should be sourced from the pfcontrol wrapper
+# once sourced it will check it is running on a
+# user slave db server and set the userslave_amslave 
+# variable.
+# when the userslavesize_alerts() function is called
+# the size of the local db is calculated and the add_alert 
+# function is called with the result.
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+# at what point do you want things to go orange/red
+USS_WARNING=520
+USS_CRITICAL=530
+
+userslavesize_hostname=`hostname`
+userslavesize_shardnum=`expr match "$userslavesize_hostname" '.*\([0-9][0-9]\)'`
+userslavesize_game=`expr match "$userslavesize_hostname" '.*-\([a-zA-Z][a-zA-Z0-9]*\)-.*'`
+
+# is this a user slave
+userslavesize_regex="live-[a-zA-Z0-9]+-dbu[0-9][0-9]s"
+[[ $userslavesize_hostname =~ $userslavesize_regex ]]
+userslavesize_amslave=$?
+
+userslavesize_valid_monitor() {
+    return $userslavesize_amslave
+}
+
+userslavesize_alerts() {
+    sql='select round(sum(DATA_LENGTH/(1024*1024*1024)),2) from information_schema.TABLES;'
+    userslavesize_res=`/usr/bin/mysql --connect_timeout=30 -u root -ss --batch -e "$sql"`
+    userslavesize_rc=$?
+    if [ $userslavesize_rc != 0 ]
+    then
+	userslavesize_rc=3 # mysql error so the data is 'unknown' as far as nagios is concerned
+    else
+	USS_WC=`echo "scale=2; $userslavesize_res < $USS_WARNING " | /usr/bin/bc`
+	if [ $USS_WC != 1 ]
+	then
+	    userslavesize_rc=1
+	    USS_CC=`echo "scale=2; $userslavesize_res < $USS_CRITICAL " | /usr/bin/bc`
+	    if [ $USS_CC != 1 ]
+	    then
+		userslavesize_rc=2
+	    fi
+	fi
+    fi
+
+    add_alert userslavesize_${userslavesize_game}_${userslavesize_shardnum} $userslavesize_rc $userslavesize_res
+}

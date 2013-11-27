@@ -1,0 +1,41 @@
+#!/bin/bash
+# control scripts for 'shard' component
+
+#Example of a monitor that can be game specific
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+shard_valid_monitor() {
+
+if [ -f "/home/jetty/webapps/root.war" ];then
+    return 0
+  fi
+  return 1
+
+}
+
+shard_alerts() {
+
+  ### test pf application status via JMX ###
+
+
+for f in `java -jar /opt/playfish/snmp/lib/cmdline-jmxclient-0.10.3.jar - 127.0.0.1:17264 | grep DB_POOL_MONITOR`;do 
+
+  RC=2
+  RESPONSE=`java -jar /opt/playfish/snmp/lib/cmdline-jmxclient-0.10.3.jar - 127.0.0.1:17264 "$f" Status 2>&1 | head -n 1`
+  if [ `echo "$RESPONSE" | grep -Po "pfstatus:"` ]; then
+     RESPONSE=`echo "$RESPONSE" | grep -Po "pfstatus:.*" | cut -d ":" -f 2`
+     SHARD=`echo "$f" | grep -Po "name=.*," | cut -d "=" -f 2 | tr -d ","`
+        if [ "$RESPONSE" == "Alive" ];then
+          RC=0
+#          RESPONSE=""
+        fi
+  fi
+  add_alert "shard_${SHARD}_status" $RC "$RESPONSE"
+
+done
+
+}

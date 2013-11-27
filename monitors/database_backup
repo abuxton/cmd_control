@@ -1,0 +1,116 @@
+#!/bin/bash
+# $Id: database_backup 7369 2013-04-08 08:50:28Z pfcallison $
+# control scripts for 'database_backup' component
+
+#Example of a monitor that can be game specific
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+    echo "error!  you must run components via the pfcontrol wrapper!" >&2
+    exit 1
+fi
+
+#STATUS_FILE='/etc/playfish/monitoring/pfcontrol/database_backup.status'
+STATUS_FILE="$HOME/.cache/database_backup.status"
+
+database_backup_valid_monitor() {
+
+    #CHECK_HOSTNAME=`hostname | grep -Po "live-farm-dbu00s"`
+    CHECK_HOSTNAME=`hostname | grep -Po "live-\w+-db\w\d\ds" | grep -v event`
+    if [ -z "$CHECK_HOSTNAME" ]
+    then
+        return 1
+    fi
+    return 0
+}
+
+hms() {
+    # ensure we treat this as a number
+    tm=$(( $1 + 0 ))
+    secs=$tm
+    mins=0
+    hrs=0
+    HMS=""
+    if [ $tm -gt 60 ]
+    then
+        secs=$(( tm % 60 ))
+        tm=$(( tm / 60 ))
+    fi
+    if [ $tm -ge 60 ]
+    then
+        mins=$(( tm % 60 ))
+        hrs=$(( tm / 60 ))
+    fi
+    # if [ $tm -gt 60 ]
+    # then
+    #     hrs=$(( tm / 60 ))
+    # fi
+    shrs=hrs; [ $hrs -eq 1 ] && shrs=hr
+    smins=mins; [ $mins -eq 1 ] && smins=min
+    ssecs=secs; [ $secs -eq 1 ] && ssecs=sec
+    printf -v HMS "%d$shrs._%d$smins._%d$ssecs." $hrs $mins $secs
+}
+database_backup_alerts() {
+
+    # RC=2
+    # check whether the backup is still running
+    binary=mysql-binary-backup.rb
+    # make this an array, just in case ps picks up more than one
+    # we will only look at the first one anyway
+    bpid=($(ps -ef |grep $binary |grep -v grep| sed 's/  \+/ /g' |cut -d" " -f 2))
+    # echo "bpid is $bpid, ${bpid[@]}"
+    if [ "X${bpid[0]}" != "X" ]
+    then
+        # binary backup still running
+        # what time did it start
+        startstr=$(stat /proc/${bpid[0]} |grep Modify |cut -d. -f1|cut -d: -f2,3,4,5)
+        startstamp=$(date -d "$startstr" "+%s")
+        nowstamp=$(date "+%s")
+        runtime=$(( nowstamp - startstamp ))
+        # has it been running for more than 5 hours (5*60*60)
+        if [ $runtime -gt 18000 ]
+        then
+            RC=2
+            hms ${runtime}
+            add_alert "Backup_is_still_running_after_${HMS}." $RC
+        else
+            bicho=$(( runtime / 3600 ))
+            if [ $bicho -ge 4 ]
+            then
+                RC=1
+                hms $runtime
+                add_alert "Backup_is_running." $RC $HMS
+            fi
+        fi
+    else
+        #check if the file exists if it doesn't or the time in <5 (minutes into the hour)  run the script and capture the exit code, and write to the file
+        if [ ! -f ${STATUS_FILE} -o `date +%M` -lt 5 ]
+        then
+            /opt/playfish/sbin/check_s3_backups.py
+            RC=$?
+            echo "$RC" > ${STATUS_FILE}
+        fi
+
+        RC=`cat ${STATUS_FILE}`
+        add_alert "database_backup_status" $RC 
+
+        #  else
+        #	#else check the timestamp of the file if it's lower than 1 hour it's ok, otherwise it's not ok
+        #	TIMESTAMP=`stat -c %Y ${STATUS_FILE}`
+        #	if [ -n $TIMESTAMP ]
+        #	then
+        #		if [ $(($TIMESTAMP-`date +%s`)) -lt 3600 ]
+        #		then
+        #			RC=0
+        #		else
+        #			echo "backup_stuck=2" > ${STATUS_FILE}
+        #			RC=1
+        #		fi 
+        #	fi
+        #  fi
+
+        #read the file and add the alert
+        #  OUTPUT=`cat ${STATUS_FILE}`
+        #  add_alert "database_backup_status" $RC "$OUTPUT"
+
+    fi
+}

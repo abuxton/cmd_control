@@ -1,0 +1,38 @@
+#!/bin/bash
+# control scripts for 'hadoop cluster' component
+# 
+# $Id: emr-node-check 6671 2012-09-19 10:09:27Z pfcallison $
+#
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+emr-node-check_valid_monitor() {
+    # check we are an adw app server
+    CHECK_HOSTNAME=`hostname | grep -Po "live-adw-app\d\d"`
+    if [[ -z $CHECK_HOSTNAME ]]
+    then
+        return 1
+    else
+        return 0
+    fi
+}
+
+emr-node-check_alerts() {
+    resultfile=/home/monitor/.cache/emr-status
+    message="No_check_performed_as_yet,_or_not_the_lead_app_server"
+    RC=0
+    if [ -e $resultfile ]
+    then
+        message=`cat $resultfile|cut -d: -f2| sed 's/ /_/g'`
+        exitval=`cat $resultfile|cut -d: -f1`
+        if [ ! "$exitval" = "0" ]
+        then
+            RC=1 # warning level
+        fi
+    fi
+    add_alert "emr-node-check" $RC $message
+}
+

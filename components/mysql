@@ -1,0 +1,242 @@
+#!/bin/bash
+# $Id: mysql 7597 2013-07-23 08:48:38Z adam.buxton $
+# control scripts for 'mysql' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+get_server_relation() {
+        if [ -f '/var/spool/playfish/meta-data/server_relation' ]; then
+                server_relation="`cat /var/spool/playfish/meta-data/server_relation`"
+        elif [ -f '/var/spool/playfish/meta-data/INSTALL_VARS' ]; then
+                source /var/spool/playfish/meta-data/INSTALL_VARS
+                server_relation=$SERVER_RELATION
+        fi
+
+        if [ -z $server_relation ]; then
+                echo ""
+        else
+                echo $server_relation
+        fi
+}
+
+get_server_service() {
+        if [ -f '/var/spool/playfish/meta-data/server_service' ]; then
+                server_service="`cat /var/spool/playfish/meta-data/server_service`"
+        elif [ -f '/var/spool/playfish/meta-data/INSTALL_VARS' ]; then
+                source /var/spool/playfish/meta-data/INSTALL_VARS
+                server_service=$SERVER_SERVICE
+        fi
+
+        if [ -z $server_service ]; then
+                echo ""
+        else
+                echo $server_service
+        fi
+}
+
+get_server_servicetype() {
+        if [ -f '/var/spool/playfish/meta-data/server_servicetype' ]; then
+                server_servicetype="`cat /var/spool/playfish/meta-data/server_servicetype`"
+        elif [ -f '/var/spool/playfish/meta-data/INSTALL_VARS' ]; then
+                source /var/spool/playfish/meta-data/INSTALL_VARS
+                server_servicetype=$SERVER_SERVICETYPE
+        fi
+
+        if [ -z $server_servicetype ]; then
+                echo ""
+        else
+                echo $server_servicetype
+        fi
+}
+
+mysql_valid_component() {
+
+  # return 1
+
+  if [ -e "/var/lib/mysql" ];then 
+    return 0
+  fi  
+  return 1
+}
+
+mysql_start() {
+  return 0
+}
+
+mysql_stop() {
+  return 0
+}
+
+mysql_status() {
+  return 1
+}
+
+mysql_offline() {
+  return 0
+}
+
+mysql_online() {
+  return 0
+}
+
+mysql_alerts() {
+
+  # No binary logs older than one day should be present locally, on a slave
+  local binlog_dir
+  local mysqlconfig="/etc/my.cnf"
+  local rc
+  local stale_days=01
+
+  # If we're on Ubuntu >= 12, look in /etc/mysql/my.cnf
+  if [[ -e '/etc/lsb-release' ]]; then
+    source /etc/lsb-release
+    if [[ `echo $DISTRIB_RELEASE | cut -d \. -f 1` -ge 12 ]]; then
+      mysqlconfig="/etc/mysql/my.cnf"
+    fi
+  fi
+
+  # Only run on slaves, and only for games in the whitelist
+  if [ "$(get_server_relation)" != 's' ]; then
+    return 0
+  fi
+
+  case "$(get_server_service)" in
+  "weboss")
+    stale_days=14
+  ;;
+  "fifa")
+    stale_days=07
+  ;;
+  "risk")
+    stale_days=07
+  ;;
+  "nhlstars")
+    stale_days=01
+  ;;
+  "madden")
+    stale_days=01
+  ;;
+  "mlbstars")
+    stale_days=01
+  ;;
+  "pets")
+    stale_days=04
+  ;;
+  "simssoc")
+    stale_days=01
+  ;;
+  "simcity")
+    stale_days=30
+  ;;
+  "billing")
+    stale_days=01
+  ;;
+  "billingads")
+    stale_days=01
+  ;;
+  "campaign")
+    stale_days=40
+  ;;
+  "cheetah")
+    stale_days=01
+  ;;
+  "console")
+    stale_days=01
+  ;;
+  "coupon")
+    stale_days=01
+  ;;
+  "couponweb")
+    stale_days=30
+  ;;
+  "crm")
+    stale_days=14
+  ;;
+  "directory")
+    stale_days=01
+  ;;
+  "email")
+    stale_days=30
+  ;;
+  "marketing")
+    stale_days=01
+  ;;
+  "playfish")
+    stale_days=01
+  ;;
+  "rewards")
+    stale_days=01
+  ;;
+  "simssocweb")
+    stale_days=01
+  ;;
+  "sonar")
+    stale_days=01
+  ;;
+  "www")
+    stale_days=14
+  ;;
+  "ops")
+    stale_days=14
+  ;;
+  "stats")
+    stale_days=14
+  ;;
+  "weboss")
+    stale_days=30
+  ;;
+  *)
+    return 1		# Eventually this whole case statement will disappear
+  ;;
+  esac
+
+  # Artificially increase the stale_days period if this is a core host, as these
+  # tend not to roll over teir binlogs that quickly
+  if [ "$(get_server_servicetype)" = 'c' ]; then
+    stale_days=30
+  fi
+
+  # ignore this check if this is a pets kafe server
+  if [ "$(get_server_servicetype)" = "k" ]; then
+      stale_days=5113
+  fi
+
+
+  # Start the work proper
+  rc=0
+  if [ -e $mysqlconfig ]; then
+    binlog_dir=`grep 'log-bin=/' $mysqlconfig | grep -v "\#" | cut -f 2 -d "=" | tr -d " "`
+    binlog_dir=`dirname $binlog_dir`
+  else
+    rc=2
+    add_alert "mysql_binlog_directory" $rc "Could not derive the mysql binlog directory from the config"
+  fi
+
+  if [[ $rc > 0 ]]; then
+    return 0
+  fi
+
+  binlog_count=`find $binlog_dir -type f -mtime +$stale_days -name "mysql-bin.*" | grep -v index | wc -l`
+
+  rc=0
+  if [ $binlog_count -gt 0 ]; then
+    rc=1
+  fi
+  add_alert "mysql_binlog_age" $rc "Binlogs older than $stale_days day(s) exist"
+
+}
+
+mysql_tidy() {
+  return 0
+}
+
+mysql_rotate() {
+  return 0
+}
+
+mysql_build() {
+  return 0
+}

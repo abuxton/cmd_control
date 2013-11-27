@@ -1,0 +1,150 @@
+#!/bin/bash
+# control scripts for 'jetty' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+jetty_valid_component() {
+
+#bowlingyh has no hostname set and doesn't listen on 9000, bail out now...
+hostname | grep -q "ip-10-250-74-113" && return 1;
+
+  # Some hosts don't have a root.war, but we still want this component to be
+  # valid. Whack out ye good-old exceptions list. If you service exists in
+  # here and you are an app server, you get the monitor regardless
+  root_required_override=( email )
+  if [ -f "/var/spool/playfish/meta-data/INSTALL_VARS" ]; then
+    source /var/spool/playfish/meta-data/INSTALL_VARS
+  fi
+
+  for override_service in ${root_required_override[@]}; do
+    if [ $override_service = "$SERVER_SERVICE" ] && [ "app" = "$SERVER_PROFILE" ]; then
+      return 0
+    fi
+  done
+
+  if [ -f "/home/jetty/webapps/root.war" ];then 
+#  if [ -d "/home/jetty" ];then 
+    return 0
+  fi  
+  return 1
+}
+
+jetty_start() {
+  return 0
+}
+
+jetty_stop() {
+  return 0
+}
+
+jetty_status() {
+  pids="`ps -u jetty -www -o'pid cmd' 2>/dev/null | grep [j]ava |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+# Not all jetty's have pid files
+  if [ -f /home/jetty/run/jetty.pid ]; then
+    pid=`cat /home/jetty/run/jetty.pid 2>/dev/null`
+    echo $pids | grep $pid >/dev/null 2>&1 || return 1
+    [ -n "$pid" ] && return 0 || return 1
+  else
+    [ -n "$pids" ] && return 0 || return 1
+  fi
+  return 1
+}
+
+jetty_offline() {
+  return 0
+}
+
+jetty_online() {
+  return 0
+}
+
+jetty_alerts() {
+
+  ### Test to see if jetty is running ###
+  RC=1
+  ps -u jetty -www -o'pid cmd' 2>/dev/null | grep [j]ava > /dev/null 2>&1
+  RC=$?
+#  add_alert "jetty_running" $RC
+  
+  #if jetty is NOT running, all other bets are off. No point running any further tests
+  if [ $RC -ne 0 ]; then
+   RC=2
+   add_alert "jetty_running" $RC
+   return 1
+  else
+   add_alert "jetty_running" $RC
+  fi 
+
+#  ### Lets confirm it's running by checking log files
+#  RC=1
+#  DELAY=0
+#  if [ -f "/home/jetty/logs/jetty.log" ];then
+#    DELAY=$((`date +"%s"` - `stat -c "%Y" /home/jetty/logs/jetty.log`))
+#    #should have written to this file LESS than 5 minutes ago
+#    if [[ $DELAY -lt 300 ]];then
+#	RC=0
+#    fi
+#  fi
+#  add_alert "jetty_logging" $RC $DELAY
+
+#  RC=1
+#  DELAY=0
+#  if [ -f "/home/jetty/logs/playfish_error.log" ];then
+#    DELAY=$((`date +"%s"` - `stat -c "%Y" /home/jetty/logs/playfish_error.log`))
+#    #should have written to this file MORE than 5 minutes ago
+#    if [[ $DELAY -gt 300 ]];then
+#	RC=0
+#    fi
+#  fi
+#  add_alert "jetty_error_logging" $RC $DELAY
+
+#  ### test pf application status via JMX ###
+#  RC=1
+#  RESPONSE=`java -jar /opt/playfish/snmp/lib/cmdline-jmxclient-0.10.3.jar - 127.0.0.1:17264 "STATUS:name=com.playfish.system.status,type=status" Status 2>&1 | head -n 1`
+#  if [ `echo "$RESPONSE" | grep -Po "pfstatus:.*"` ]; then 
+#     RESPONSE=`echo "$RESPONSE" | grep -Po "pfstatus:.*" | cut -d ":" -f 2`
+#	if [ "$RESPONSE" == "ALIVE" ];then
+#          RC=0
+#          RESPONSE=""
+#  	fi
+#  fi
+#  add_alert "pf_application_status" $RC "$RESPONSE"
+
+  ### test we can fetch static file from jetty ###
+  RC=1
+  if [ "$SERVER_SERVICE" = 'email' ]; then
+    RC=0
+  else
+    wget -t 1 -T 10 -q -O - localhost:9000/crossdomain.xml > /dev/null && RC=0
+  fi
+  add_alert "jetty_broken" $RC 
+  
+  # quick hack 'til simcity gets fixed
+  # chris allison 13/09/12
+  if hostname |grep simcity >/dev/null 2>&1
+  then
+      RC=0
+  else
+      if [ ! -e /mnt/jetty/var/event-log-fallback.sql ]; then
+          RC=0
+      elif [ -e /mnt/jetty/var/event-log-fallback.sql ]; then
+          RC=2
+      fi
+  fi
+  add_alert "jetty_event_log_failback" ${RC}
+}
+
+jetty_tidy() {
+  return 0
+}
+
+jetty_rotate() {
+  return 0
+}
+
+jetty_build() {
+  return 0
+}

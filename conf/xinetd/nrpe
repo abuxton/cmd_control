@@ -1,0 +1,20 @@
+# default: on
+# description: NRPE
+
+service nrpe
+{
+        type           = UNLISTED
+        flags = REUSE
+        socket_type = stream
+        protocol       = tcp
+        wait = no
+        user = nrpe
+	port = 5666
+        nice = -1
+        server = /usr/sbin/nrpe
+        server_args = -n -c /etc/nagios/nrpe.cfg --inetd
+        log_on_failure += USERID
+        disable = no
+        # Change this to your primary Nagios server
+        only_from = 127.0.0.1 10.118.202.76 10.74.39.251 10.38.15.123 10.0.0.0/8
+}

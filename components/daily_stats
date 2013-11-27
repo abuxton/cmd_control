@@ -1,0 +1,103 @@
+#!/bin/bash
+# control scripts for 'daily_stats' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+DAILY_STATS_LOCKFILE=/home/sysops/locks/dailystats.lock
+
+daily_stats_valid_component() {
+   CHECK_HOSTNAME=`hostname | grep -Po "live-stats-app\d\d"`
+
+   if [[ -z $CHECK_HOSTNAME ]]; then
+      return 1;
+   fi
+   return 0
+
+}
+
+
+daily_stats_start() {
+  return 0
+}
+
+daily_stats_stop() {
+  return 0
+}
+
+daily_stats_status() {
+  pid="`ps -u sysops -www -o'pid cmd' 2>/dev/null | grep [S]tatsUpdaterHourly |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+  LASTLOG=`ls /home/sysops/logs/dailystatslog* | tail -1`
+  if [ -n "$LASTLOG" ];then
+    MESSAGE="Last run: $((`date +"%s"` - `stat -c "%Y" $LASTLOG`)) Seconds ago"
+  fi
+  if [ -f $DAILY_STATS_LOCKFILE ]; then
+     return 0
+  fi
+  return 1
+}
+
+daily_stats_offline() {
+  return 0
+}
+
+daily_stats_online() {
+  return 0
+}
+
+daily_stats_alerts() {
+  ### Check data in DB is up to date #####
+  RC=1
+  TIME=`mysql --connect_timeout=30 -h live-stats-dbc00m.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select unix_timestamp(max(start_date)) from stats_main limit 1"`
+  if [ -z "$TIME" ]; then
+        TIME=0
+  fi
+  # 2days
+  if [[ $((`date +%s` - $TIME)) -lt 216000 ]];then
+    RC=0
+  fi
+  add_alert "daily_stats_delay" $RC $((`date +%s` - $TIME)) 
+
+#  ### Check no errors were reported ###
+#  RC=0
+#  if daily_stats_status; then
+#    LASTLOG=`ls /home/sysops/logs/dailystatslog* | tail -2 | head -n 1`
+#  else
+#    LASTLOG=`ls /home/sysops/logs/dailystatslog* | tail -1`
+#  fi
+#  tail -1 $LASTLOG | grep -q "No errors reported" || RC=1
+#  add_alert "daily_stats_errors" $RC
+
+  ### Check we've not been running for too long ###
+  RC=0
+  DELAY=0
+  if [ -e $DAILY_STATS_LOCKFILE ]; then
+    DELAY=$((`date +"%s"` - `stat -c "%Y" $DAILY_STATS_LOCKFILE`))
+    if [[ $DELAY -gt 14400 ]];then
+      RC=1
+    fi
+  fi
+  add_alert "daily_stats_stuck" $RC $DELAY
+
+}
+
+daily_stats_personal_alerts() {
+#do some shit...
+return 1
+
+}
+
+daily_stats_tidy() {
+  return 0
+}
+
+daily_stats_rotate() {
+  return 0
+}
+
+daily_stats_build() {
+  return 0
+}
+

@@ -1,0 +1,160 @@
+#!/bin/bash
+#
+# blame: Chris Allison <chris.allison@playfish.com>
+#
+# control scripts for 'lapsed_users' component
+#
+# 03/09/12 Chris Allison
+# altered day range for simcity to be 2 weeks
+# temp. change for OPS-20030
+#
+# 04/09/12 Chris Allison
+# temp change reverted back to 7 days collection for simcity
+#
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+lapsed_users_valid_component() {
+  # are we a slave user server
+  CHECK_HOSTNAME=`hostname | grep -Po "live-[a-z]+-dbu\d\ds"`
+  if [[ -z $CHECK_HOSTNAME ]]; then
+    return 1;
+  fi
+  return 0
+}
+
+lapsed_users_start() {
+  return 0
+}
+
+lapsed_users_stop() {
+  return 0
+}
+
+lapsed_users_status() {
+  pid=$$
+  return 0
+}
+
+lapsed_users_offline() {
+  return 0
+}
+
+lapsed_users_online() {
+  return 0
+}
+
+lapsed_users_alerts() {
+  ### There is no current monitoring - always returns true ###
+  return 0
+}
+
+lapsed_users_tidy() {
+  # hijacked for daily use.
+  # slut: search for lapsed users (tidily <grin>)
+  #
+  # should be run from cron once a day as 
+  # 12 3 * * * monitor /opt/playfish/snmp/pfcontrol tidy 
+  #
+  # aws user: playfish-lapsed-put
+  # Access Key Id: AKIAJ4IZCVMEHDFVLDVA
+  # Secret Access Key: 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
+  AWS_ACCESS_KEY_ID=AKIAJ4IZCVMEHDFVLDVA
+  AWS_SECRET_ACCESS_KEY=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
+  export AWS_ACCESS_KEY_ID
+  export AWS_SECRET_ACCESS_KEY
+  slut_s3cmd="/usr/bin/s3cmd"
+  slut_s3_base="playfish_lapsed_users"
+  slut_game=`hostname | grep -Po "live-[a-z]+-dbu\d\ds" |cut -d- -f2`
+  if [ -n $slut_game ]
+  then
+    slut_shardnum=`hostname |grep -Po "\d\d"`
+    if [ -n $slut_shardnum ]
+    then
+      slut_tmpfile=${HOME}/.cache/CCA
+      rm -f $slut_tmpfile >/dev/null 2>&1
+      rm -f ${slut_tmpfile}.gz >/dev/null 2>&1
+      slut_day=`date "+%a"`
+      slut_file="${HOME}/.cache/lapsed_users_list"
+      slut_cn_file="${HOME}/.cache/lapsed_users_list.count"
+      if [ $slut_game = "simcity" ]
+      then
+          slut_timestamp=`date -d "7 days ago" "+%s"`
+      else
+          slut_timestamp=`date -d "7 days ago" "+%s"`
+      fi
+      slut_timestring=`date -d@$slut_timestamp`
+      slut_timestamp=${slut_timestamp}"000"
+      # slut_sql="select id into outfile '$slut_tmpfile' from user where last_access_time<$slut_timestamp"
+      slut_sql="select id from user where last_access_time<$slut_timestamp"
+      slut_db="${slut_game}_game"
+      slut_db_opts="-u root -ss --batch"
+      slut_stats_db="ops"
+      slut_stats_table="lapsed_users"
+      slut_stats_host="live-ops-dbc00m.internal.live.playfish.com"
+      slut_stats_user="slutrw"
+      slut_stats_pass="slutpw"
+      slut_stats_sql="insert into lapsed_users values ";
+      # get midnight today as a string
+      slut_tmp=`date |sed 's/\(.*[0-9][0-9]* \)[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\(.*\)/\100:00:00\2/'`
+      slut_stats_date=`date "+%Y-%m-%d"`
+      #
+      # maybe check that the db exists (how? via mysql - show databases? via ls /mnt/mysql db name?)
+      #
+      # run the query
+      # slut_op=`mysql ${slut_db_opts} ${slut_db} -e "$slut_sql"`
+      mysql ${slut_db_opts} ${slut_db} -e "$slut_sql" >$slut_tmpfile
+      # check that it created the tmpfile (and it has data in it?)
+      if [ -f $slut_tmpfile ]
+      then
+        if [ -r $slut_tmpfile ]
+        then
+          slut_cn=`wc -l $slut_tmpfile |cut -d" " -f1`
+          if [ $slut_cn -gt 0 ]
+          then
+            echo $slut_cn >$slut_cn_file
+            # reuse slut_timestamp
+            slut_timestamp=`date "+%s"`
+            slut_jj=${slut_shardnum:0:1}
+            if [ "$slut_jj" = "0" ]
+            then
+                slut_sn=${slut_shardnum:1:1}
+            else
+                slut_sn=$slut_shardnum
+            fi
+            slut_stats_sql="$slut_stats_sql ('$slut_stats_date','$slut_game',$slut_sn,$slut_cn)"
+            mysql -h $slut_stats_host -u $slut_stats_user -p$slut_stats_pass $slut_stats_db -e "$slut_stats_sql"
+            mv $slut_tmpfile $slut_file
+            gzip -9 -f $slut_file
+            if [ $? -eq 0 ]
+            then
+              slut_file=${slut_file}.gz
+              slut_hostname=`hostname`
+              slut_s3file=${slut_s3_base}:${slut_game}/${slut_day}/${slut_hostname}.id.gz
+              s3cmd put ${slut_s3file} ${slut_file}
+              # did it work
+              if [ $? -eq 0 ]
+              then
+                # everything ok
+                return 0
+              fi
+            fi
+          fi
+        fi
+      fi
+    fi
+  fi
+  # something went wrong
+  return 1
+}
+
+lapsed_users_rotate() {
+  return 0
+}
+
+lapsed_users_build() {
+  return 0
+}

@@ -1,0 +1,73 @@
+#!/bin/bash
+# control scripts for vertica node
+# $Id: adw_vertica_node 7347 2013-03-27 08:13:29Z pfcallison $
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+adw_vertica_node_valid_monitor() {
+    # vertica has been retired, don't check
+    return 1
+    # check we are an adw app server
+    CHECK_HOSTNAME=`hostname | grep -Po "live-adw-dbw\d\d"`
+    if [[ -z $CHECK_HOSTNAME ]]
+    then
+	return 1
+    else
+	return 0
+    fi
+}
+
+adw_vertica_node_alerts() {
+    for ADW_NODE_PROG in /opt/vertica/bin/vertica /opt/vertica/spread/sbin/spread
+    do
+        ps aux |grep $ADW_NODE_PROG |grep -v grep >/dev/null 2>&1
+        if [ $? -eq 0 ]
+        then
+            add_alert "ADW_program_${ADW_NODE_PROG}_missing" 0
+        else
+            add_alert "ADW_program_${ADW_NODE_PROG}_missing" 2
+        fi
+    done
+    adw_check_stuck_loading_processes
+    return 0
+}
+
+adw_check_stuck_loading_processes() {
+    ccaStamp=`date "+%s"`
+
+	ccaStuckPids=`ls -l /proc |grep transport |sed 's/  \+/ /g'|cut -d' ' -f 9`
+
+	if [ -n "$ccaStuckPids" ]
+	then
+	    ccaOldIfs=$IFS
+	    IFS=" "
+
+	    echo $ccaStuckPids |while read p
+	    do
+		# ccaProcTime=`ls -l /proc/$p/cmdline |sed 's/  \+/ /g'|cut -d" " -f 6-8`
+		# ccaProcStamp=`date -d "$ccaProcTime" "+%s"`
+		ccaProcTime=`stat -c %Y /proc/$p/cmdline`
+		ccaProcStamp=$ccaProcTime
+		if [[ $ccaStamp -gt $ccaProcStamp ]]
+		then
+		    ccaProcLen=$(( ccaStamp - ccaProcStamp ))
+		    if [ $ccaProcLen -gt 900 ]
+		    then
+			# echo "pid $p > 15 mins ($ccaProcLen)"
+			add_alert "Vertica_Load_Stuck" 2 "Pid: ${p} ${ccaProcLen} seconds"
+		    else
+			# echo "pid $p ok ($ccaProcLen)"
+			add_alert "Vertica_Load_Stuck" 0 "Pid: ${p} ${ccaProcLen} seconds"
+		    fi
+		else
+		    add_alert "Vertica_Load_Stuck" 1 "Script_Error: Time Stamp: ${ccaStamp} ProcStamp: ${ccaProcStamp} ProcLen: ${ccaProcLen} ProcTime: ${ccaProcTime}"
+		fi
+	    done
+	    IFS=$ccaOldIfs
+	else
+	    add_alert "Vertica_Load_Stuck" 0
+    	fi
+}

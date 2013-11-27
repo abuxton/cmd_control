@@ -1,0 +1,31 @@
+#!/bin/bash
+# control scripts for 'playfish_bin_repo' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+playfish_bin_repo_valid_monitor() {
+  #always run=0
+  #removed as no longer req 20130721 adam.buxton@playfish.com
+  return 1
+}
+
+playfish_bin_repo_alerts() {
+
+  ### check we're pointing to the right repo
+  RC=1
+  svn info /opt/playfish/ | grep "URL: " | grep -q "svnci.svc.fishonomics.com"
+  RC=$?
+  add_alert "playfish_bin_wrong_repo" $RC 
+
+  ### check there are no uncommited files - apparently update_playfishbin leaves to hanging directories
+  RC=1
+  COUNT=`svn status /opt/playfish/ | wc -l`
+  if [[ $COUNT -lt 3 ]]; then
+    RC=0
+  fi
+
+  add_alert "playfish_bin_uncommited_files" $RC
+}

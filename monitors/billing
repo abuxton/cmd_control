@@ -1,0 +1,73 @@
+#!/bin/bash
+# control scripts for 'billing' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+BILLING_IGNORE=" bowling bowling-bebo bowling-myspace bowling-yahoo brain brain-igoogle cooking cooking-mixi dummy dummy2 empire farm farm gangster geo hotel madden madden2012 minigolf mixi-global mlbstars monopoly nhlstars pets-bebo pets-cyworld pets-myspace pirates planets poker risk survivors word word-myspace word-netlog "
+
+billing_valid_monitor() {
+
+    #not sure at the moment if these tests should go in game specific files, or their own files, so here for now. Should be run on billing app/DB node.
+    CHECK_HOSTNAME=`hostname | grep -Po "live-billing-app00"`
+
+    if [[ -z $CHECK_HOSTNAME ]]; then
+       return 1;
+    fi
+    return 0
+}
+
+billing_alerts() {
+
+  ## Check to see if we have enough data in the database to perform a valid test ###
+  FIRST_EVENT=`mysql --connect_timeout=30 -h live-event-dbc00r1.internal.live.playfish.com -u appread -pgxturiqe -ss --batch core -e "select min(time) from event_log"`
+  if [[ $((`date +%s` - $FIRST_EVENT/1000)) -lt $DELAY ]];then
+    #event log has been rotated - all bets are off!
+    add_alert "billing_events_rotated" 1 "$((`date +%s` - $FIRST_EVENT/1000))"
+  else
+    add_alert "billing_events_rotated" 0 "$((`date +%s` - $FIRST_EVENT/1000))"
+    RC=0
+    TOTAL_EVENTS=`mysql --connect_timeout=30 -h live-event-dbc00r1.internal.live.playfish.com -u appread -pgxturiqe -ss --batch core -e "select count(*) from event_log"`
+    if [[ $TOTAL_EVENTS -lt 5 ]]; then
+      RC=1
+    fi
+    add_alert "billing_events_broken" $RC "$TOTAL_EVENTS"
+  fi
+
+  ### Now we check billing events for specific games.... ###
+#  mysql --connect_timeout=30 -h live-stats-dbc00s.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select type,game from event_type where event = 'billing-transaction-complete'" |
+  while read TYPE GAME;do
+  #we need to be able to set thresholds per game - this is a nasty hack to achieve this. Ideally we should read/deduce this data from the DB/common data source
+  if [ "$GAME" == "nhlstars" ];then
+     #240
+     DELAY=14400
+  elif [ "$GAME" == "mlbstars" ];then
+     #240
+     DELAY=14400
+  else 
+     #20 mins
+     DELAY=1200
+  fi
+  echo "$BILLING_IGNORE" | grep -Poq " $GAME " > /dev/null 2>&1
+  if [ $? -eq 1 ];then
+    RC=1
+    LAST_EVENT=`mysql --connect_timeout=30 -h live-event-dbc00r1.internal.live.playfish.com -u appread -pgxturiqe -ss --batch core -e "select max(time) from event_log where type = $TYPE"`
+    if [[ $((`date +%s` - $FIRST_EVENT/1000)) -gt $DELAY ]];then
+      #when did we see last billing event
+      if [[ $((`date +%s` - $LAST_EVENT/1000)) -gt $DELAY ]];then
+        RC=1
+      else
+        RC=0
+      fi
+    else 
+       #in this instance there is not enough data to calculate the result
+       RC=0
+    fi
+    add_alert billing_"$GAME"_events_delay $RC "$((`date +%s` - $LAST_EVENT/1000))"
+  fi
+
+  done < <(mysql -h live-stats-dbc00s.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select type,game from event_type where event = 'billing-transaction-complete'")
+  return 0
+}

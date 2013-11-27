@@ -1,0 +1,246 @@
+#!/bin/bash
+# control scripts for 'archiver' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+event_archiver_valid_component() {
+
+  return 1
+
+  CHECK_HOSTNAME=`hostname | grep -Po "live-event-dba\d\dm"`
+  if [[ -z $CHECK_HOSTNAME ]]; then
+     return 1;
+  fi
+
+}
+
+event_archiver_start() {
+  return 0
+}
+
+event_archiver_stop() {
+  return 0
+}
+
+event_archiver_status() {
+     return 0
+}
+
+event_archiver_offline() {
+  return 0
+}
+
+event_archiver_online() {
+  return 0
+}
+
+
+event_archiver_alerts() {
+
+  ### Check lock file to ensure we're not stuck #####
+
+  ### Check lock file to ensure we're not stuck #####
+
+  # WARNLEVEL=7200 # 2 hours
+  WARNLEVEL=1800 # 30 minutes
+  # CRITICALLEVEL=10800 # 3 hours
+  CRITICALLEVEL=3600 # 1 hour
+  STAMPNOW=`date +"%s"`
+  LOCKFILE=/home/sysops/locks/archiver.lck
+  _cca_log_dir=/home/sysops/logs
+  LOGNAMESTUB=archiveeventlog
+  RC=0
+  if [[ -f $LOCKFILE ]]; then
+    FILECTIME=`stat -t -c"%Y" $LOCKFILE`
+    FILEAGE=$(( $STAMPNOW - $FILECTIME ))
+    if [[ $FILEAGE -gt $WARNLEVEL ]]
+    then
+	RC=1
+    fi
+    if [[ $FILEAGE -gt $CRITICALLEVEL ]]
+    then
+	RC=2
+    fi
+
+    # if [[ $((`date +"%s"`-`stat -t -c"%Y" /home/sysops/locks/archiver.lck`)) -gt 7200 ]];then
+    #   RC=1
+    # fi
+  fi
+
+  add_alert event_archiver_locked $RC
+
+#   ### 2nd check for locked out archiving
+#   EVENTLTIME=$(event_archiver_read_log_files)
+#   if [[ $EVENTLTIME -gt $WARNLEVEL ]]
+#   then
+#       RC=1
+#   fi
+#   if [[ $EVENTLTIME -gt $CRITICALLEVEL ]]
+#   then
+#       RC=2
+#   fi
+#   add_alert event_archiver_still_locked $RC $EVENTLTIME
+
+  ### Check log file to ensure we're actually running #####
+  RC=0
+  if [ -d $_cca_log_dir ]
+  then
+      _cca_logs=`ls -tr ${_cca_log_dir}/${LOGNAMESTUB}* |tail -n 1`
+      if [ ! -z $_cca_logs ]
+      then
+	  if [ -r $_cca_logs ]
+	  then
+	      FILECTIME=`stat -t -c "%Y" $_cca_logs`
+	      DURATION=$(( $STAMPNOW - $FILECTIME ))
+	      if [ $DURATION -gt $WARNLEVEL ]
+	      then
+		  RC=1
+		  RERROR="file_time_"`date "+%Y-%m-%d_%H:%M" -d @$FILECTIME`
+	      fi
+	      if [ $DURATION -gt $CRITICALLEVEL ]
+	      then
+		  RC=2
+		  RERROR="file_time_"`date "+%Y-%m-%d_%H:%M" -d @$FILECTIME`
+	      fi
+	  else
+	      # there is a log file, but we can't read it, whats the point of that, eh
+	      # i'm telling someone on you
+	      RC=2
+	      RERROR="Cannot_read_${_cca_logs}"
+	  fi
+      else
+	  # hmm, no log files at all - I want my mummy
+	  RC=2
+	  RERROR="No_Log_Files_found"
+      fi
+  else
+      # oh dear the log directory appears to be missing, quick, call the prime minister
+      RC=2
+      RERROR="The_Log_directory_is_missing."
+  fi
+
+#  RC=1
+#  if [[ $((`date +"%s"` - `stat -t -c "%Y" \`ls -tr /home/sysops/logs/archiveeventlog* | tail -1\``)) -lt 7200 ]]; then
+#    RC=0
+#  fi
+
+  add_alert event_archiver_missing $RC $RERROR
+
+  ### check the database to ensure data is current ###
+  RC=0
+  ARCHIVE_TIME=`mysql --connect_timeout=30 -u root -ss --batch archive -e "select max(time) from event_log"`
+
+  if [[ $((`date +%s` - $ARCHIVE_TIME/1000)) -gt 7200 ]];then
+	RC=1
+  fi
+
+  add_alert event_archiver_delay $RC $((`date +%s` - $ARCHIVE_TIME/1000))
+
+  ### check disk space ###
+  RC=0
+  MONTH_SIZE=`cal  | egrep -v '[A-Za-z]' | wc -w`
+  TODAY=`date +%d`
+  TODAY=`echo $TODAY|sed 's/^0*//'`
+  MAX_ALLOWED=$(( $TODAY * 3 + 2 ))
+
+  if [[ $MAX_ALLOWED -lt 15 ]];then
+    MAX_ALLOWED=15
+  fi
+
+  SIZE_NOW=`df -P /mnt/mysql | grep -vE '^Filesystem|tmpfs|cdrom' | awk '{ print $5 }' | cut -d "%" -f 1`
+
+  if [[ $SIZE_NOW -gt $MAX_ALLOWED ]]; then
+     RC=1
+  fi
+  add_alert event_archiver_disk_space $RC $SIZE_NOW
+
+}
+
+event_archiver_personal_alerts() {
+return 0
+
+}
+
+event_archiver_tidy() {
+  return 0
+}
+
+event_archiver_rotate() {
+  return 0
+}
+
+event_archiver_build() {
+  return 0
+}
+
+event_archiver_read_log_files() {
+    LOCKED=1
+    LOCKEDFOR=0
+    NUMLOCKS=0
+    LOGSTUB=/home/sysops/logs/archiveeventlog
+    DATE=$(date --utc "+%Y-%m-%d %T")
+    STAMP=$(date2stamp "$DATE")
+    # ensure it is on a 5 minute boundary, upto 4' 59'' ago
+    STAMP=$(( STAMP - ( STAMP % 300 ) ))
+    # move it forward 5 mins as the while loop will decrease it
+    STAMP=$(( STAMP + 300 ))
+    while [ 1 -eq $LOCKED ]
+    do
+	STAMP=$(( STAMP - 300 ))
+	DSTR=$(stamp2archivedate $STAMP)
+	LASTLOG=$LOGSTUB-$DSTR
+	if [ -r $LASTLOG ]
+	then
+	    if [ ! $(grep "Event log archiver already running" $LASTLOG >/dev/null 2>&1) ]
+	    then
+		NUMLOCKS=$(( NUMLOCKS + 1 ))
+	    else
+		LOCKED=0
+	    fi
+	else
+	    LOCKED=0
+	fi
+    done
+    if [ $NUMLOCKS -gt 0 ]
+    then
+	LOCKEDFOR=$(( NUMLOCKS * 300 ))
+    fi
+    echo $LOCKEDFOR
+}
+
+stamp2archivedate () {
+    date --utc --date "1970-01-01 $1 sec" "+%Y%m%d-%H%M"
+}
+archivedate2stamp () {
+    DD=`echo $1 |sed 's/^.*\([0-9][0-9]\{3\}\)\([0-9][0-9]\)\([0-9][0-9]\)-\([0-9][0-9]\)\([0-9][0-9]\).*$/\1-\2-\3 \4:\5/'`
+    date --utc --date "$DD" "+%s"
+}
+
+#######################################################################################
+# from http://www.unix.com/tips-tutorials/31944-simple-date-time-calulation-bash.html #
+#######################################################################################
+date2stamp () {
+    date --utc --date "$1" +%s
+}
+
+stamp2date (){
+    date --utc --date "1970-01-01 $1 sec" "+%Y-%m-%d %T"
+}
+
+dateDiff (){
+    case $1 in
+        -s)   sec=1;      shift;;
+        -m)   sec=60;     shift;;
+        -h)   sec=3600;   shift;;
+        -d)   sec=86400;  shift;;
+        *)    sec=86400;;
+    esac
+    dte1=$(date2stamp $1)
+    dte2=$(date2stamp $2)
+    diffSec=$((dte2-dte1))
+    if ((diffSec < 0)); then abs=-1; else abs=1; fi
+    echo $((diffSec/sec*abs))
+}

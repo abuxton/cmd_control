@@ -1,0 +1,104 @@
+#!/bin/bash
+# $Id: database_recovery 7361 2013-04-04 08:42:37Z pfcallison $
+# control scripts for 'database crash recovery' component - mawalsh
+# Will only ever warn in icinga, and you'll probably never notice this as it will get reset by pfcontrol
+# It will open a Jira ticket for investigation, unless one has already been opened in the last 6 hours
+#
+# updated 04/04/13 c.c.allison
+# it doesn't open a jira ticket, it emails martin directly, so have stopped it doing that
+# have updated the test for finding the error log to allow for log_error and log-error and 
+# to remove any spaces on the line
+
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+    echo "error!  you must run components via the pfcontrol wrapper!" >&2
+    exit 1
+fi
+
+STATE_DIR='/home/monitor/logwarn'
+FILE="/home/monitor/.cache/database_recovery.status"
+MSG="MySQL_Crash_Recovery"
+
+database_recovery_valid_monitor() {
+
+    /usr/bin/mysqladmin -u root status >/dev/null 2>&1
+    MYSQLDRC=$?
+
+    # Donot run if on 32 bit system...  logwarn is 64bit binary only
+    BIT=`getconf LONG_BIT`
+    if [[ "$BIT" == "32" ]]
+    then
+        return 1
+    else
+        return $MYSQLDRC
+    fi
+
+}
+
+database_recovery_alerts() {
+
+    ## We only want to return a WARNING at best... never a critical
+    RETURNC=1
+
+    ## Check where the my.cnf file is!
+    ## This is problematic as there are a lot of different builds out there old RS/new RS/Chef
+    ## So we are going to stick with 2 static locations
+    ##
+    ## 04/04/13 c.c.allison
+    ## the error log line can now have spaces in it as well as it may have
+    ## changed it's name from log-error to log_error
+    ## updating to check for both
+    ##
+    
+    if [ -e /etc/my.cnf ]
+    then
+        MYSQLD_LOG=$(sed -n 's/^ *log[-_]error *= *\(.*\)$/\1/p' /etc/my.cnf)
+        # MYSQLD_LOG=`grep "log-error=" /etc/my.cnf | awk -F"=" '{print $2}'`
+    elif [ -e /etc/mysql/my.cnf ]
+    then
+        MYSQLD_LOG=$(sed -n 's/^ *log[-_]error *= *\(.*\)$/\1/p' /etc/mysql/my.cnf)
+        # MYSQLD_LOG=`grep "log-error=" /etc/mysql/my.cnf | awk -F"=" '{print $2}'`
+    else
+        MSG=$MSG"_nocnf"
+    fi
+
+    ## Check if the logwarn state directory exists
+    if [ ! -d ${STATE_DIR} ]
+    then
+        mkdir -p ${STATE_DIR}
+    fi
+
+    ## Check if the mysqd.log file exists
+    if [ -e ${MYSQLD_LOG} ]
+    then
+        /opt/playfish/sbin/logwarn -d ${STATE_DIR} -apq ${MYSQLD_LOG} 'Starting crash recovery' >/dev/null 2>&1
+        RETURNC=$?
+        ## Output crash details to Db
+        if [[ "$RETURNC" == "1" ]]
+        then
+            EMSG="`hostname` database_recovery_status:$RETURNC:$MSG"
+            HOST=`hostname`
+            START=$((`grep -n "Starting crash recovery" ${MYSQLD_LOG} | tail -1 | awk -F":" '{print $1}'`-1))
+            END=$((START+10))
+            LOGDETAIL=`sed "${START},${END}!d" ${MYSQLD_LOG}`
+            /usr/bin/mysql -h live-ops-dbc00m.internal.live.playfish.com -u crashrec -p'yrevocer!' crash_recovery_record -e "insert into mysqldlog(timestamp,host,logdetail) VALUES(now(),\"${HOST}\",\"${LOGDETAIL}\")"
+            echo "MySQL Crashed.  Please investigate...." >$FILE
+            echo $EMSG >>$FILE
+            echo $HOST >>$FILE
+            echo "$LOGDETAIL" >>$FILE
+#             cat $FILE | mailx -s "MySQL Crash: $HOST" martin.walsh@playfish.com
+            ## Chef built boxes have different file permissions currently so catch and change to WARN(1) as we donot want any criticals for this!
+        elif [ $RETURNC -ge 1 -o $RETURNC -lt 0 ]
+        then
+            MSG=$MSG"_logwarn_error_code"$RETURNC
+            RETURNC=1
+        fi
+    else
+        MSG=$MSG"_nolog"
+    fi
+
+    ## Output results to pfcontrol
+    add_alert "database_recovery_status" $RETURNC $MSG
+    #echo "database_recovery_status" $RETURNC $MSG >>$FILE
+
+}

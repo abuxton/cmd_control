@@ -1,0 +1,92 @@
+#!/bin/bash
+# control scripts for 'gau db objects' monitor - mawalsh
+# Checks for the existence of the 4 db objects.
+#
+# Missing-DBObject_GAUCHECK_UPDATE_TRG
+# - Trigger missing from game database 
+# Missing-DBObject_gaucheck_TABLE
+# - Table missing from gau database
+# Missing-DBObject_gauhistory_TABLE
+# - Table missing from gau database
+# Missing-UPDATE_to_gauhistory_tbl
+# - gau.gauhistory table has now updates in the last 2 minutes
+# Undefined_error
+
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+gau_db_object_valid_monitor() {
+ 
+  CHECK_HOSTNAME=`hostname | egrep "^live-(risk|madden|nhlstars|fifa|simcity|falafel|pets|kiwi|simssoc)-dbu[0-9]{2,3}(s)$" | egrep -v "^live-pets-dbu[0][0-2]s$"`
+  if [ -z "$CHECK_HOSTNAME" ]
+  then
+	return 1
+  fi
+  return 0
+
+}
+
+gau_db_object_alerts() {
+
+  RETURNC=0
+  local MSG
+  declare -a SQLCHECK
+  DBNAME=`hostname | awk -F"-" '{print $2}'`"_game"
+  SQLCOUNT=1
+  CHKOBJ=`/usr/bin/mysql information_schema -u root -s -N -e "select count(*) from TRIGGERS where TRIGGER_SCHEMA='${DBNAME}' AND TRIGGER_NAME='GAUCHECK_UPDATE'; SELECT count(*) FROM TABLES WHERE TABLE_SCHEMA='gau' AND TABLE_NAME='gaucheck'; SELECT count(*) FROM TABLES WHERE TABLE_SCHEMA='gau' AND TABLE_NAME='gauhistory'; select 1 from gau.gauhistory where activetime > UNIX_TIMESTAMP(DATE_SUB(NOW(), INTERVAL 3 MINUTE)) limit 1;"`
+  RC0=$?
+
+  if [ $RC0 -eq 0 ]
+  then
+	for RESULT in $CHKOBJ
+	do
+		if [ $RESULT -ne 1 ]
+		then
+			SQLCHECK=("${SQLCHECK[@]}" "$SQLCOUNT")
+		fi
+		SQLCOUNT=$((SQLCOUNT+1))
+	done
+  else
+	MSG="SQL_checks_failing"
+	RETURNC=2
+  fi
+
+  if [ ${#SQLCHECK[@]} -gt 0 ]
+  then
+  	MSG="Missing"
+  	for ERRORS in ${SQLCHECK[@]}
+  	do
+		if [ $ERRORS -eq 1 ]
+		then
+			MSG=$MSG"-DBObject_GAUCHECK_UPDATE_TRG"
+			RETURNC=2
+
+		elif [ $ERRORS -eq 2 ]
+		then
+			MSG=$MSG"-DBObject_gaucheck_TABLE"	
+			RETURNC=2
+
+		elif [ $ERRORS -eq 3 ]
+   	 	then
+			MSG=$MSG"-DBObject_gauhistory_TABLE"
+			RETURNC=2
+
+	        elif [ $ERRORS -eq 4 ]
+       		then
+			MSG=$MSG"-UPDATE_to_gauhistory_tbl"
+			RETURNC=2
+
+		else
+			MSG="Undefined_error"
+		fi
+  	done
+  fi
+
+  ## Output results to pfcontrol
+  add_alert "gau_db_object" $RETURNC $MSG
+  ##echo "gau_db_object" $RETURNC $MSG
+
+}

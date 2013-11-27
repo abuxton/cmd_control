@@ -1,0 +1,262 @@
+#!/usr/bin/perl
+# -*- cperl -*-
+# $Id: check_disk_all,v 1.1 2006/06/20 15:08:28 janl Exp $
+
+=head1 NAME
+
+check_disk_all - check for available disk-space on all disks
+
+=head1 SYNOPSIS
+
+check_disk_all [OPTIONS][devices]
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<--df> PATH_TO_DF
+
+Use this df insted of the default. The default is /bin/df
+
+=item B<--dfoptions> OPTIONS
+
+Pass these options to df instead of defaults. Defaults are "-Plk" on
+Linux and SunOS "lk" on anything else.  GNU df may be required for the
+"-P" option.
+
+=item B<--special> DEVICE=WARN,CRIT
+
+Set limits for warnings/critical errors for this device.
+
+=item B<--exclude> DEVICE
+
+Exclude this device
+
+=item B<--inode>
+
+Also check available inodes. (Require gnu df. Use the --df option)
+
+=item B<--only> DEVICE
+
+Check only this device
+
+=item B<--help>
+
+Help.
+
+=item B<--man>
+
+Show man-page.
+
+=head1 DESCRIPTION
+
+Parses output from either GNU df or solaris df.
+
+=head1 LIMITATIONS
+
+Not tested on other OSes then Debian GNU/Linux and Solaris. Most of the
+unixen should have a "df" thats produces POSIX-compliant output (if
+there is such a thing, GNU df talk of this).
+
+=head1 AUTHORS
+
+Per Andreas Buer <perbu@linpro.no>.
+
+Bugfixing by Andreas Dahl <andread@linpro.no> and Nicolai Langfeldt
+<janl@linpro.no>
+
+=back
+
+=cut
+
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Data::Dumper;
+use Pod::Usage;
+use POSIX;
+
+use constant CRIT => 2;
+use constant WARN => 1;
+use constant OK => 0;
+
+my %OPTS;
+
+
+my %SPECIAL;
+my %EXCLUDES;
+my %ONLY;
+
+GetOptions( \%OPTS, "warn=i", "crit=i",
+            "dfoptions=s",
+            "df=s",
+            "special=s" => \%SPECIAL,
+            "exclude=s" => \%EXCLUDES,
+            "only=s" => \%ONLY,
+            "help",
+            "man",
+            "inode"
+          ) or pod2usage( -verbose=> 0,
+                          -message => "Try '$0 --help' for more help.\n"
+                        );
+
+pod2usage( -verbose => 1 ) if ($OPTS{help});
+pod2usage( -verbose => 2 ) if ($OPTS{man});
+
+# defaults
+
+$OPTS{warn} ||= 20;
+$OPTS{crit} ||= 10;
+
+my %DF = get_df();
+
+my (@warn, @crit);
+
+if (scalar @ARGV) {
+  for my $dev (@ARGV) {
+
+    if (not defined($DF{$dev})) {
+      die("Unknown filesystem: $dev\n");
+    }
+
+    my $rv = check($dev);
+    if ($rv == CRIT) {
+      push(@crit, $dev);
+    } elsif ($rv == WARN) {
+      push(@warn, $dev);
+    }
+  }
+}
+else {
+  # check all filesystems.
+  for my $dev (sort keys %DF) {
+    next if (defined( $EXCLUDES{$dev} ));
+    next if (%ONLY && ! defined( $ONLY{$dev} ));
+    my $rv = check($dev);
+
+    if ($rv == CRIT) {
+      push(@crit, $dev);
+    } elsif ($rv == WARN) {
+      push(@warn, $dev);
+    }
+  }
+}
+
+if (@crit) {
+  print("CRITICAL (", scalar @crit , " filesystems) ",
+        join(", ",
+             map { "$_ ($DF{$_}->{free}% free [$DF{$_}->{ifree}\% inodes])"
+                       } @crit ), "\n");
+  exit(CRIT);
+
+} elsif (@warn) {
+  print("WARNING (", scalar @warn , " filesystems) ",
+        join(", ",
+             map { "$_ ($DF{$_}->{free}% free [$DF{$_}->{ifree}\% inodes])"
+                       } @warn ), "\n");
+  exit(WARN);
+} else {
+  print("OK - All checked filsystems OK\n");
+  exit(OK);
+}
+
+
+
+sub check {
+  my ($dev) = @_;
+  my ($warn, $crit);
+  # special device
+  if (defined( $SPECIAL{$dev} )) {
+    ($warn,$crit) = split(/,/, $SPECIAL{$dev})
+  } else {
+    ($warn, $crit) = ($OPTS{warn}, $OPTS{crit} );
+  }
+
+  if ( $DF{$dev}->{free} < $crit ||
+       ($OPTS{inode} && $DF{$dev}->{ifree} < $crit ) ) {
+    return CRIT;
+  } elsif ( $DF{$dev}->{free} < $warn ||
+            ($OPTS{inode} && $DF{$dev}->{ifree} < $warn ) ) {
+    return WARN;
+  }
+
+  OK;
+}
+
+
+
+sub get_df {
+  my %TMP;
+
+  my $df = $OPTS{df} || find_df();
+  my $options = $OPTS{dfoptions} || find_df_options();
+
+  # Space
+  open(DF,"$df -$options |");
+  while(<DF>) {
+    next if (not m,^(:?/|swap|\w+\:),);
+  resplit:
+    my ($dev, $size, $used, $avail, $cap, $mnt) = split '\s+';
+    # Sometimes df continuates the output on the next line.
+    if (!defined($size) || !$size) {
+      chomp $_; # Eat the newline so that the concatenation is good
+      $_ .= <DF>;
+      goto resplit;
+    }
+    next if ($dev =~ m,^(:?/proc|fd|mnttab|none)$,);
+    $TMP{$dev} = {
+                  size => $size,
+                  used => $used,
+                  avail => $avail,
+                  cap => $cap,
+                  mnt => $mnt,
+                  ifree => "--", # Will be replaced if inodes are checked
+                  free =>
+                  ($size == 0)? 0 : sprintf("%2.0f", 100 * $avail / $size),
+                 };
+  }
+  close(DF);
+  # Inodes
+  if ($OPTS{inode}){
+    open(DF,"$df --inode -$options |");
+    while(<DF>) {
+      next if (not m,^(:?/|swap|\w+\:),);
+      my ($dev, $size, $used, $avail, $cap, $mnt) = split '\s+';
+      next if ($dev =~ m,^(:?/proc|fd|mnttab)$,);
+      $TMP{$dev}{'icap'} = $cap;
+      if ( $cap =~ m/(\d+)\%/ ){
+        $TMP{$dev}{'ifree'} = 100 - $1;
+      }
+      else {
+        $TMP{$dev}{'ifree'} = 0;
+      }
+    }
+    close(DF);
+  }
+  return %TMP;
+}
+
+sub find_df {
+  my $uname = POSIX::uname();
+  if ($uname eq 'SunOS') {
+    return '/usr/local/bin/df';
+  } else {
+    # default
+    return '/bin/df';
+  }
+}
+
+sub find_df_options {
+  my $uname = POSIX::uname();
+
+  if ($uname eq 'Linux' or $uname eq 'SunOS') {
+    return 'Plk';
+  } else {
+    # default
+    return 'lk';
+  }
+
+  # .. add you own hacks here
+
+}

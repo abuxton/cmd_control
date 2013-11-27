@@ -1,0 +1,65 @@
+#!/bin/bash
+# control scripts for atlassian hosted web site tests
+#
+# array of urls to check
+#atlassion_GURLS=("http://crowd.svc.fishonomics.com/console/login.action" "http://fisheye.svc.fishonomics.com/" "https://confluence.svc.fishonomics.com/login.action" "https://jira.svc.fishonomics.com/secure/Dashboard.jspa")
+#removed crowd as now behind firewall
+atlassion_GURLS=("http://fisheye.svc.fishonomics.com/" "https://confluence.svc.fishonomics.com/login.action" "https://jira.svc.fishonomics.com/secure/Dashboard.jspa")
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+#
+# rational - curl only returns an exit status
+# greater than zero on network errors (no dns,
+# network failure, tcp timeout etc).  Http errors
+# are not considered by curl as an error.
+#
+atlassian_check_url() {
+    atlassian_url=$1
+    atlassian_rc=0
+    if [ "X$atlassian_url" != "X" ]
+    then
+        atlassian_res=`curl -Is $atlassian_url`
+        if [ $? -eq 0 ]
+        then
+            atlassian_hstat=`echo "$atlassian_res" |grep HTTP/1 |cut -d" " -f2`
+            if [ $atlassian_hstat -eq 200 ]
+            then
+                atlassian_rc=0
+                atlassian_str=$atlassian_url
+            else
+                atlassian_rc=1
+                atlassian_str="URL:$atlassian_url:HTTP:$atlassian_hstat"
+            fi
+        else
+            atlassian_rc=2
+            atlassian_str="No response from $atlassian_url"
+        fi
+        add_alert "Check_JIRA" $atlassian_rc $atlassian_str
+        # echo "Check_JIRA" $atlassian_rc $atlassian_str
+    fi
+}
+
+atlassian_valid_monitor() {
+    # check we are an ops web server
+    CHECK_HOSTNAME=`hostname | grep -Po "live-ops-web\d\d"`
+    if [[ -z $CHECK_HOSTNAME ]]
+    then
+        return 1
+    else
+        return 0
+    fi
+}
+
+atlassian_alerts() {
+    cn=0
+    while [ "X${atlassion_GURLS[$cn]}" != "X" ]
+    do
+        atlassian_check_url ${atlassion_GURLS[$cn]}
+        cn=$(( cn + 1 ))
+    done
+}
+

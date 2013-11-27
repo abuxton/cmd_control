@@ -1,0 +1,97 @@
+#!/bin/bash
+# control scripts for 'java' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+java_valid_component() {
+ 
+  c=`hostname | grep -c nda`
+  
+  if [ $c -eq 1 ]; then
+     return 0
+  else
+     return 1
+  fi
+}
+
+java_start() {
+  for context in `find  /home/java/contexts -maxdepth 1 -name "*.ct" 2>/dev/null| sort -n`; do
+    context_name=`basename $context | cut -d "." -f 1`
+    echo -n "$context_name "
+  done
+
+  return 0
+}
+
+java_stop() {
+  for context in `find  /home/java/contexts -maxdepth 1 -name "*.ct" 2>/dev/null| sort -n`; do
+    context_name=`basename $context | cut -d "." -f 1`
+    echo -n "$context_name "
+  done
+
+  return 0
+}
+
+java_status() {
+  #hmm, so this is interesting, because there can be more than 1 java process running. Need to check the contexts to see how many. Currently overloading the "pid" return variable to include multiple pids and process names
+  pids=""
+  for context in `find  /home/java/contexts -maxdepth 1 -name "*.ct" 2>/dev/null| sort -n`; do
+    context_name=`basename $context | cut -d "." -f 1`
+    pids="`ps -u java -www -o'pid cmd' 2>/dev/null | grep [j]ava | grep $context_name | awk '{print $1}' | paste -sd" "`" 2>/dev/null
+  if [ -n $pids ];then
+    pid="$pid, $context_name:$pids"
+  else
+    pid="$context_name:$pids"
+  fi
+  done
+
+  [ -n "$pid" ] && return 0 || return 1
+
+}
+
+java_offline() {
+  return 0
+}
+
+java_online() {
+  return 0
+}
+
+java_alerts() {
+  ### check we have some defined contexts ###
+  RC=1
+  if [ `find  /home/java/contexts -maxdepth 1 -name "*.ct" 2>/dev/null| wc -l` -gt 0 ];then
+   RC=0
+  fi
+  add_alert "java_contexts_configured" $RC
+
+
+  ### check each specificed context is running ###
+  for context in `find  /home/java/contexts -maxdepth 1 -name "*.ct" 2>/dev/null| sort -n`; do
+    context_name=`basename $context | cut -d "." -f 1`
+    RC=2
+    ps -u java -www -o'pid cmd' 2>/dev/null | grep [j]ava | grep $context_name> /dev/null 2>&1
+    E=$?
+    if [ $E -gt 0 ]; then
+       RC=2
+    else
+       RC=0
+    fi
+    add_alert "java_running_$context_name" $RC
+  done
+}
+
+java_tidy() {
+  return 0
+}
+
+java_rotate() {
+  return 0
+}
+
+java_build() {
+  return 0
+}

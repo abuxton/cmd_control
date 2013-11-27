@@ -1,0 +1,27 @@
+#!/bin/bash
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+server_config_non_standard_valid_monitor() {
+ 
+	return 0
+}
+
+server_config_non_standard_alerts() {
+
+  RC=0
+  CR=0
+  
+  if [ -f "/etc/playfish/playfish_motd" ]
+  then
+    if [ "`cat /etc/playfish/playfish_motd | wc -l`" -gt 0 ]; then
+  	CR=1
+    fi
+  fi
+
+  add_alert "server_config_non_standard" $RC $CR
+
+}

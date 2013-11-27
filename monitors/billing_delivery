@@ -1,0 +1,61 @@
+#!/bin/bash
+# control scripts for 'billing delivery_processing table' monitor - mawalsh
+# Checks the delivery_processing table for number of rows and the age of transcations.
+# If more than 25 rows, or and transaction is older than 30 minutes alert
+
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+billing_delivery_valid_monitor() {
+ 
+  CHECK_HOSTNAME=`hostname | grep -Po "live-billing-dbc[0-9]+m"`
+  if [ -z "$CHECK_HOSTNAME" ]
+  then
+	return 1
+  fi
+  return 0
+
+}
+
+billing_delivery_alerts() {
+
+  RETURNC=0
+  
+  RESULT_ROWCNT=`/usr/bin/mysql -u root billing -s -N -e "select count(*) from delivery_processing"`
+  RC0=$?
+  RESULT_ATT=`/usr/bin/mysql -u root billing -s -N -e "select count(*) from delivery_processing where attempts > 25"`
+  RC1=$?
+
+  if [ ! -z $RESULT_ROWCNT -o ! -z $RESULT_ATT ]
+  then
+	echo "ROWCNT=$RESULT_ROWCNT OLDREC=$RESULT_ATT" >/tmp/bill_delivery_mon.log
+  	if [ $((RESULT_ROWCNT)) -gt 1000 -o $((RESULT_ATT)) -gt 0 ]
+		then 
+			RETURNC=2
+			if [ $RESULT_ROWCNT -gt 1000 -a $RESULT_ATT -gt 0 ]
+			then
+				MSG="table_has_+1000rows_&_records>25_attempts"
+			elif [ $RESULT_ROWCNT -gt 1000 ]
+                	then
+                        	MSG="table_has_+1000rows"
+			elif [[ $RESULT_ATT -gt 0 ]]
+			then
+				MSG="table_has_records>25_attempts"
+  			fi 
+	else
+		MSG="OK"
+	fi
+  else
+	echo "One or both Variables are 0 in length"
+	RETURNC=1
+	MSG="SQL_error!check_sql_for_this_pf_monitor"
+  fi
+
+  ## Output results to pfcontrol
+  add_alert "billing_delivery_processing" $RETURNC $MSG
+  #echo "billing_delivery_processing" $RETURNC $MSG
+
+}

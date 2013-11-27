@@ -1,0 +1,50 @@
+#!/bin/bash
+# control scripts for 'example_success' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+example_success_valid_component() {
+    #suggest you enable this on a per host basis for testing
+    return 1
+}
+
+example_success_start() {
+  return 0
+}
+
+example_success_stop() {
+  return 0
+}
+
+example_success_status() {
+  return 0
+}
+
+example_success_offline() {
+  return 0
+}
+
+example_success_online() {
+  return 0
+}
+
+example_success_alerts() {
+   ### An example of how to raise a succesfull alert: Note, we raise everything, icinga will only alert on warning or critical messages ###
+   add_alert "example_success_result" 0 "A test method that always generates a success response (return code 0)"
+}
+
+example_success_tidy() {
+  return 0
+}
+
+example_success_rotate() {
+  return 0
+}
+
+example_success_build() {
+  return 0
+}
+

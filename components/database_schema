@@ -1,0 +1,77 @@
+#!/bin/bash
+#
+# blame: Chris Livermore <chris.livermore@playfish.com>
+#
+# control scripts for 'database_schema' component
+# Ultimately, db_backups and this component should be all rolled into a single mysql component ??
+# takes a DB dump and shoves it into s3
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+database_schema_valid_component() {
+  # are we a slave user server
+  CHECK_HOSTNAME=`hostname | grep -Po "live-[a-z]+-dbu\d\ds"`
+  if [[ -z $CHECK_HOSTNAME ]]; then
+    return 1;
+  fi
+  return 0
+}
+
+database_schema_start() {
+  return 0
+}
+
+database_schema_stop() {
+  return 0
+}
+
+database_schema_status() {
+  pid=$$
+  return 0
+}
+
+database_schema_offline() {
+  return 0
+}
+
+database_schema_online() {
+  return 0
+}
+
+database_schema_alerts() {
+  ### There is no current monitoring - always returns true ###
+  return 0
+}
+
+database_schema_tidy() {
+  AWS_ACCESS_KEY_ID=AKIAIUOIYWWH3HK6FDAQ
+  AWS_SECRET_ACCESS_KEY=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
+  export AWS_ACCESS_KEY_ID
+  export AWS_SECRET_ACCESS_KEY
+
+  DBNAME=`hostname | awk -F"-" '{print $2}'`
+	if [[ $DBNAME == "letters" ]]; then
+		DBNAME=$DBNAME
+	elif [[ $DBNAME == "crm" ]]; then
+                DBNAME=$DBNAME"_service"
+        else
+                DBNAME=$DBNAME"_game"
+        fi
+
+
+  /usr/bin/mysqldump -u root --no-data --skip-opt --skip-comments --compact $DBNAME > /tmp/`hostname`.dmp 
+  echo $DBNAME > /tmp/dbname.txt
+  s3cmd put ops.playfish.com:schemas/`hostname`.dmp /tmp/`hostname`.dmp x-amz-acl:public-read
+  return 0
+}
+
+database_schema_rotate() {
+  return 0
+}
+
+database_schema_build() {
+  return 0
+}

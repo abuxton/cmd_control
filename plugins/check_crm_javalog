@@ -1,0 +1,22 @@
+#!/bin/bash
+
+javalog_alerts() {
+
+    local logFile="/mnt/logs/java.log" # /home/java/logs/
+    local ageThreshold="5400" # 90 minutes
+    local myhost=$(hostname)
+
+    # test for the file and test age
+    if ! [ -f "$logFile" ]; then
+        echo "CRITICAL - $logFile not present on $myhost"
+        exit 2
+    elif (( $(date +%s)-$(date -r $logFile +%s) > $ageThreshold )); then
+        echo "CRITICAL - $logFile is stale on $myhost"
+        exit 2
+    else
+        echo "OK"
+        exit 0
+    fi
+}
+
+javalog_alerts

@@ -1,0 +1,54 @@
+#!/bin/bash
+# control scripts for 'DEFAULT' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+DEFAULT_COMPONENT_valid_component() {
+    return 0
+}
+
+DEFAULT_COMPONENT_start() {
+  return 0
+}
+
+DEFAULT_COMPONENT_stop() {
+  return 0
+}
+
+DEFAULT_COMPONENT_status() {
+  pid=$$
+  return 0
+}
+
+DEFAULT_COMPONENT_offline() {
+  return 0
+}
+
+DEFAULT_COMPONENT_online() {
+  return 0
+}
+
+DEFAULT_COMPONENT_alerts() {
+  ### The default test - always returns true ###
+  add_alert "component_bootstrap" 0
+}
+
+DEFAULT_COMPONENT_tidy() {
+  return 0
+}
+
+DEFAULT_COMPONENT_rotate() {
+  return 0
+}
+
+DEFAULT_COMPONENT_build() {
+  mkdir -p $HOME/{.cache,logs} 
+  # Possibly we could add cron entry automatically in this function
+  # We should also probably populate the file .cache/alerts with some data to prevent monitoring picking up issues until the install is complete
+  echo "DEFAULT_build=0:`date +%s`" >> $HOME/.cache/alerts
+  return 0
+}
+

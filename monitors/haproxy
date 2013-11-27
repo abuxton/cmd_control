@@ -1,0 +1,58 @@
+#!/bin/bash
+# monitor scripts for 'haproxy' component.
+#
+# First revision, for OPS-15458.
+# BLAME: sam.pointer@playfish.com
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+haproxy_valid_monitor() {
+	# If our hostname ends in lb[0-9]+, we're a load balancer and should be running haproxy on port 80, and maybe 443
+	local load_balancer
+
+	load_balancer=`hostname | cut -d \- -f 3 | egrep -c "lb[0-9]+"`
+	if [ "$load_balancer" -eq 1 ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+haproxy_alerts() {
+	# See if we can fetch plain HTTP and SSL stats pages, and that they contain the content we expect
+	local http_count=0
+	local https_count=0
+	local rc=2
+	local skip=0
+	local exception=""
+	local service="`hostname | cut -d \- -f 2`"
+	local https_exceptions="campaign mon www simssocweb rewards playfishadm playfish ops letters igoogle identity email crmservice"	# Space delimited
+
+	# Perform an http check regardless
+	http_count=`curl -ku stats:5t4t5 http://localhost/haproxy-stats 2>/dev/null   | egrep -c "jetty_listener|apache_listener|wordpress"`
+
+	# Perform an https check if this service is not an exception
+	skip=0
+	for exception in $https_exceptions; do
+		if [ $exception = $service ]; then
+			skip=1
+		fi
+	done
+	if [ $skip -eq 0 ]; then
+		https_count=`curl -ku stats:5t4t5 https://localhost/haproxy-stats 2>/dev/null | egrep -c "jetty_ssl_listener|apache_listener|wordpress"`
+	else
+		https_count=99	# Pretend to skip alert
+	fi
+
+	# Add alerts in response to our results
+	if [ "$http_count" -eq 0 ]; then
+		add_alert "haproxy_listeners" "$rc" "No http jetty_listener detected on stats page"
+	fi
+
+	if [ "$https_count" -eq 0 ]; then
+		add_alert "haproxy_listeners" "$rc" "No https jetty_ssl_listener detected on stats page"
+	fi
+}

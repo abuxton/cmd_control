@@ -1,0 +1,50 @@
+#!/bin/bash
+# control scripts for 'example_warning' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+example_warning_valid_component() {
+    #suggest you enable this on a per host basis for testing
+    return 1
+}
+
+example_warning_start() {
+  return 0
+}
+
+example_warning_stop() {
+  return 0
+}
+
+example_warning_status() {
+  return 0
+}
+
+example_warning_offline() {
+  return 0
+}
+
+example_warning_online() {
+  return 0
+}
+
+example_warning_alerts() {
+   ### An example of how to raise a warning alert ###
+   add_alert "example_warning_result" 1 "A test method that always generates a warning response (return code 1)"
+}
+
+example_warning_tidy() {
+  return 0
+}
+
+example_warning_rotate() {
+  return 0
+}
+
+example_warning_build() {
+  return 0
+}
+

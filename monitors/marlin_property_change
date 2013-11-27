@@ -1,0 +1,48 @@
+#!/bin/bash
+# control scripts for marlin dev server DEV.properties monitor
+#
+# $Id: marlin_property_change 5998 2012-05-25 10:36:39Z pfcallison $
+#
+
+MPCCTRL=/home/monitor/.cache/lastmd5
+MPCDP=/home/jetty/local/DEV.properties
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+marlin_property_change_valid_monitor() {
+  # is this a dev box?
+  if [ -f $MPCDP ]
+  then
+    # is this a marlin box
+    hostname |grep -Po "marlin" >/dev/null 2>&1
+    return $?
+  fi
+  return 1
+}
+
+marlin_property_change_alerts() {
+  if [ -f $MPCDP ]
+  then
+    MPCMD5=`md5sum $MPCDP |cut -d" " -f 1`
+    if [ -f $MPCCTRL ]
+    then
+      MPCTMP=`cat $MPCCTRL`
+      if [ "$MPCTMP" = "$MPCMD5" ]
+      then
+	add_alert "marlin_property_change" 0
+      else
+	hostname=`hostname`
+        mail -s "$hostname: Changes detected in $MPCDP" christopher.livermore@playfish.com <$MPCDP
+        mail -s "$hostname: Changes detected in $MPCDP" chris.allison@playfish.com <$MPCDP
+        echo $MPCMD5 >$MPCCTRL
+	add_alert "marlin_property_change" 0
+      fi
+    else
+      echo $MPCMD5 >$MPCCTRL
+    fi
+  fi
+}
+

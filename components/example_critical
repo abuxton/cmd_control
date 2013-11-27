@@ -1,0 +1,50 @@
+#!/bin/bash
+# control scripts for 'example_critical' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+example_critical_valid_component() {
+    #suggest you enable this on a per host basis for testing
+    return 1
+}
+
+example_critical_start() {
+  return 0
+}
+
+example_critical_stop() {
+  return 0
+}
+
+example_critical_status() {
+  return 0
+}
+
+example_critical_offline() {
+  return 0
+}
+
+example_critical_online() {
+  return 0
+}
+
+example_critical_alerts() {
+   ### An example of how to raise a critical alert ###
+   add_alert "example_critical_result" 2 "A test method that always generates a critical response (return code 2)"
+}
+
+example_critical_tidy() {
+  return 0
+}
+
+example_critical_rotate() {
+  return 0
+}
+
+example_critical_build() {
+  return 0
+}
+

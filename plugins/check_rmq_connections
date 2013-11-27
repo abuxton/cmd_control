@@ -1,0 +1,66 @@
+#!/bin/bash
+# 
+# Plugin to monitor the number of connections to RabbitMQ
+#
+
+# Get arguements
+
+while getopts 'w:c:hp' OPT; do
+  case $OPT in
+    w) int_warn=$OPTARG;;
+    c) int_crit=$OPTARG;;
+    h) hlp="yes";;
+    *) unknown="yes";;
+  esac
+done
+
+# usage
+
+HELP="
+  Usage: $0 [ -w value -c value -h ]
+
+  syntax:
+
+    -w --> Warning integer value
+    -c --> Critical integer value
+    -h --> print this help screen
+"
+
+if [ "$hlp" == "yes" -o $# -lt 1 ]; then
+  echo "$HELP"
+  exit 0
+fi
+
+# get number of connections to RabbitMQ
+
+CONNECTIONS=`/usr/sbin/rabbitmqctl list_connections | grep -v "^Listing" | grep -v "done.$" | wc -l`
+OUTPUT="connections: $CONNECTIONS"
+
+if [ -n "$int_warn" -a -n "$int_crit" ]; then
+
+  err=0
+
+  if (( $CONNECTIONS >= $int_crit )); then
+    err=2
+  elif (( $CONNECTIONS >= $int_warn )); then
+    err=1
+  fi
+
+  if (( $err == 0 )); then
+    echo "RMQ Connections OK - $OUTPUT"
+  elif (( $err == 1 )); then
+    echo "RMQ Connections WARNING - $OUTPUT"
+  elif (( $err == 2 )); then
+    echo "RMQ Connections CRITICAL - $OUTPUT"
+  fi
+
+  exit "$err"
+
+else
+
+  echo "no output from plugin"
+  exit 3
+fi
+exit
+
+

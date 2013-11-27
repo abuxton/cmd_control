@@ -1,0 +1,35 @@
+#!/bin/bash
+# control scripts for 'check_cpu_iowait' component
+
+#Example of a monitor that can be game specific
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+
+check_cpu_iowait_valid_monitor() {
+ 
+## Always true conditional for testing allert - phil 26-04-12
+CHECK_HOSTNAME=`hostname`
+  if [ -z "$CHECK_HOSTNAME" ]
+  then
+	return 1
+  fi
+  if [ -e '/etc/debian_version' ]
+  then
+  	return 1
+  fi 
+  return 1
+}
+
+check_cpu_iowait_alerts() {
+  IOWAIT_STATUS_FILE="$HOME/.cache/check_cpu_iowait.status"
+  RC=2
+  IOWAIT=`/opt/playfish/sbin/check_cpu_iowait.py`
+  RC=$?
+  echo "$RC" > ${IOWAIT_STATUS_FILE}
+  add_alert "check_cpu_iowait_status" $RC "${IOWAIT}% iowait"
+
+}

@@ -1,0 +1,101 @@
+#!/bin/bash
+# control scripts for 'hourly_stats' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+HOURLY_STATS_LOCKFILE=/home/sysops/locks/hourlystats.lock
+
+hourly_stats_valid_component() {
+
+  return 1
+
+  CHECK_HOSTNAME=`hostname | grep -Po "live-stats-app\d\d"`
+
+  if [[ -z $CHECK_HOSTNAME ]]; then
+     return 1;
+  fi
+  return 0
+
+
+}
+
+
+hourly_stats_start() {
+  return 0
+}
+
+hourly_stats_stop() {
+  return 0
+}
+
+hourly_stats_status() {
+  pid="`ps -u sysops -www -o'pid cmd' 2>/dev/null | grep [S]tatsUpdaterHourly |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+  LASTLOG=`ls /home/sysops/logs/hourlystatslog* | tail -1`
+  if [ -n "$LASTLOG" ];then
+    MESSAGE="Last run: $((`date +"%s"` - `stat -c "%Y" $LASTLOG`)) Seconds ago"
+  fi
+  if [ -f $HOURLY_STATS_LOCKFILE ]; then
+     return 0
+  fi
+  return 1
+}
+
+hourly_stats_offline() {
+  return 0
+}
+
+hourly_stats_online() {
+  return 0
+}
+
+hourly_stats_alerts() {
+
+  ### Check data in DB is up to date #####
+  RC=1
+  TIME=`mysql --connect_timeout=30 -h live-stats-dbc00m.internal.playfish.com -u stats -ptsfesqrb -ss --batch stats -e "select unix_timestamp(max(start_time)) from stats_hourly limit 1"`
+
+  # 3600 = 1 hour
+  if [ -z "$TIME" ]; then
+	TIME=0
+  fi
+  if [[ $((`date +%s` - $TIME)) -lt 40000 ]];then
+    RC=0
+  fi
+  add_alert "hourly_stats_delay" $RC $((`date +%s` - $TIME))
+
+#  ### Check no errors were reported ###
+#  RC=0
+#  if hourly_stats_status; then
+#    LASTLOG=`ls /home/sysops/logs/hourlystatslog* | tail -2 | head -n 1`
+#  else
+#    LASTLOG=`ls /home/sysops/logs/hourlystatslog* | tail -1`
+#  fi
+#  tail -1 $LASTLOG | grep -q "No errors reported" || RC=1
+#  add_alert "hourly_stats_errors" $RC
+
+  ### Check we've not been running for too long ###
+  RC=0
+  DELAY=0
+  if [[ -e $HOURLY_STATS_LOCKFILE ]];then
+    DELAY=$((`date +"%s"` - `stat -c "%Y" $HOURLY_STATS_LOCKFILE`))
+    if [[ $DELAY -gt 14400 ]];then
+      RC=1
+    fi
+  fi
+  add_alert "hourly_stats_stuck" $RC $DELAY
+}
+
+hourly_stats_tidy() {
+  return 0
+}
+
+hourly_stats_rotate() {
+  return 0
+}
+
+hourly_stats_build() {
+  return 0
+}

@@ -1,0 +1,19 @@
+#!/bin/bash
+# control scripts for 'word_game' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+word_game_valid_monitor() {
+
+  return 1
+
+  is_deployed "com.playfish.fb.word.WordGame"
+  return $?
+}
+
+word_game_alerts() {
+  add_alert "word_game_status" 0 
+}

@@ -1,0 +1,65 @@
+#!/bin/bash
+# control scripts for 'apache' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+apache_valid_component() {
+  return 1
+  if [ -e "/usr/sbin/httpd" ];then 
+    return 0
+  fi  
+  return 1
+}
+
+apache_start() {
+  return 0
+}
+
+apache_stop() {
+  return 0
+}
+
+apache_status() {
+  pids="`ps -u root -www -o'pid cmd' 2>/dev/null | grep [h]ttpd |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+  [ -n "$pids" ] && return 0 || return 1
+  return 1
+}
+
+apache_offline() {
+  return 0
+}
+
+apache_online() {
+  return 0
+}
+
+apache_alerts() {
+  ### Test to see if apache is running ###
+  RC=1
+  ps -u root -www -o'pid cmd' 2>/dev/null | grep [h]ttpd > /dev/null 2>&1
+  RC=$?
+  add_alert "apache_running" $RC
+  
+  #if apache is NOT running, all other bets are off. No point running any further tests
+  if [ $RC -ne 0 ]; then
+   return 1
+  fi 
+
+  ### If we had a common page, or alias, rewrite, we could do a local wget to ensure we can connect and look for specific context ###
+  return 0
+}
+
+apache_tidy() {
+  return 0
+}
+
+apache_rotate() {
+  return 0
+}
+
+apache_build() {
+  return 0
+}

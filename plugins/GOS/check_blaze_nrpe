@@ -1,0 +1,71 @@
+#! /usr/bin/perl -w
+
+use strict;
+use FindBin;
+use lib $FindBin::Bin;
+use utils qw($TIMEOUT %ERRORS &print_revision &support);
+use vars qw($PROGNAME $PROGVER);
+use Getopt::Long;
+use vars qw($opt_V $opt_u $opt_d $verbose $opt_h);
+
+$PROGNAME = "check_blaze_nrpe";
+$PROGVER = "1.1";
+
+sub print_help ();
+sub print_usage ();
+
+Getopt::Long::Configure('bundling');
+GetOptions ("V"   => \$opt_V, "version"    => \$opt_V,
+        "u=s" => \$opt_u, "user"       => \$opt_u,
+        "d=s" => \$opt_d, "directory"  => \$opt_d,
+        "h"   => \$opt_h, "help"       => \$opt_h);
+
+if ($opt_V) {
+    print_revision($PROGNAME,'$Revision: '.$PROGVER.' $'); 
+    exit $ERRORS{'UNKNOWN'};
+}
+
+if ($opt_h) {
+    print_help();
+    exit $ERRORS{'UNKNOWN'};
+}
+
+print_usage() unless (($opt_u) && ($opt_d));
+
+my $logFilename = glob("~$opt_u/$opt_d/log/status.log");
+
+# The log file is frequently deleted and recreated.
+# If it is missing, give it a chance to reappear.
+if (! -e $logFilename) {
+    sleep 1;
+}
+
+my $status;
+if (-e $logFilename) {
+    $status = `/bin/cat $logFilename`;
+} else {
+    $status = "WARNING: Cannot check Blaze status due to missing status.log\n";
+}
+
+my ($state, $info) = $status =~ /(\w+): (.*)/;
+
+print $status;
+exit $ERRORS{$state};
+			
+sub print_usage () {
+    print "Usage: $PROGNAME -u <user> -d <directory> [-v] [-h]\n";
+    exit $ERRORS{'UNKNOWN'} unless ($opt_h);
+}
+				
+sub print_help () {
+    print_revision($PROGNAME,'$Revision: '.$PROGVER.' $');
+    print "Copyright (c) 2009 Electronic Arts\n";
+    print "\n";
+    print_usage();
+    print "\n";
+    print "-u <user>      = deploy user\n";
+    print "-d <directory> = deploy directory\n";
+    print "-v = Verbose Output.\n";
+    print "-h = This screen.\n\n";
+    support();
+}

@@ -1,0 +1,19 @@
+#!/bin/bash
+# control scripts for 'geo_game' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+geo_game_valid_monitor() {
+ 
+  return 1
+
+  is_deployed "com.playfish.fb.geo.GeoGame"
+  return $?
+}
+
+geo_game_alerts() {
+  add_alert "geo_game_status" 0 
+}

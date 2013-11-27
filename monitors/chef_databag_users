@@ -1,0 +1,33 @@
+#!/bin/bash
+# control scripts for 'billing' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+chef_databag_users_valid_monitor() {
+    # We only want to execute this check on the Cobbler host
+    if [ "`hostname`" = 'cobbler' ]; then
+      return 0
+    else
+      return 1
+    fi
+}
+
+chef_databag_users_alerts() {
+    local lockfile="/opt/cobbler/attach/ALL/chef/.lock"
+    local delay=0
+    local rc=0
+
+    # If the lock file exists and is older than an hour then we've got a problem. Alert.
+    if [ -e "$lockfile" ]; then
+      delay=$((`date +"%s"` - `stat -c "%Y" $lockfile`))
+      if [[ $delay -gt 3600 ]]; then
+        rc=1
+      fi
+    fi
+
+    add_alert "chef_databag_users_stuck" "$rc" "$delay"
+}
+

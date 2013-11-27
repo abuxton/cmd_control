@@ -1,0 +1,71 @@
+#!/bin/bash
+# control scripts for 'haproxy' component
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+haproxy_valid_component() {
+
+  return 1
+
+  if [ -d "/home/haproxy" ];then 
+    return 0
+  fi  
+  return 1
+}
+
+haproxy_start() {
+  return 0
+}
+
+haproxy_stop() {
+  return 0
+}
+
+haproxy_status() {
+  pids="`ps -u haproxy -www -o'pid cmd' 2>/dev/null | grep [h]aproxy |  awk '{print $1}' | paste -sd" "`" 2>/dev/null
+# Not all haproxy's have pid files
+  if [ -f /home/haproxy/haproxy.pid ]; then
+    pid=`cat /home/haproxy/haproxy.pid 2>/dev/null`
+    echo $pids | grep $pid >/dev/null 2>&1 || return 1
+    [ -n "$pid" ] && return 0 || return 1
+  else
+    [ -n "$pids" ] && return 0 || return 1
+  fi
+  return 1
+}
+
+haproxy_offline() {
+  return 0
+}
+
+haproxy_online() {
+  return 0
+}
+
+haproxy_alerts() {
+  ### Test to see if HAProxy is running ###
+  RC=1
+  ps -u haproxy -www -o'pid cmd' 2>/dev/null | grep [h]aproxy > /dev/null 2>&1
+  RC=$?
+  add_alert "haproxy_running" $RC
+  
+  #if haproxy is NOT running, all other bets are off. No point running any further tests
+  if [ $RC -ne 0 ]; then
+   return 1
+  fi 
+}
+
+haproxy_tidy() {
+  return 0
+}
+
+haproxy_rotate() {
+  return 0
+}
+
+haproxy_build() {
+  return 0
+}

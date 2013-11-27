@@ -1,0 +1,67 @@
+#!/bin/bash
+# control scripts for maven00.fishonomics.com, which is live-nexus-app00.live.playfish.com
+# script to check servie is working
+#
+# array of urls to check
+maven_FILES=("/nexus/content/groups/public/com/ea/eadp/io/fb-dev-helper/1.0.0.01/fb-dev-helper-1.0.0.01.pom")
+maven_ROU='readuser' #maven readonly user
+maven_ROP='rdsrplfsh' #maven read only password
+
+
+if [ -z "$SCRIPT" ] || [ -z "$MYUSER" ] || [ -z "$MYBASE" ]; then
+  echo "error!  you must run components via the pfcontrol wrapper!" >&2
+  exit 1
+fi
+
+#
+# rational - curl only returns an exit status
+# greater than zero on network errors (no dns,
+# network failure, tcp timeout etc).  Http errors
+# are not considered by curl as an error.
+#
+maven_availability_check_url() {
+    maven_url='http://'$2':'$3'@localhost'$1
+    maven_rc=0
+    if [ "X$maven_url" != "X" ]
+    then
+        maven_res=`curl -Is $maven_url`
+        if [ $? -eq 0 ]
+        then
+            maven_hstat=`echo "$maven_res" |grep HTTP/1 |cut -d" " -f2`
+            if [ $maven_hstat -eq 200 ]
+            then
+                maven_rc=0
+                maven_str=$maven_url
+            else
+                maven_rc=1
+                maven_str="URL:$maven_url:HTTP:$maven_hstat"
+            fi
+        else
+            maven_rc=2
+            maven_str="No response from $maven_url, if server is up please restart apache"
+        fi
+        add_alert "Check_live_nexus_app" $maven_rc $maven_str
+        #echo "Check_live_nexus_app" $maven_rc $maven_str
+    fi
+}
+
+maven_availability_valid_monitor() {
+    # check we are an ops web server
+    CHECK_HOSTNAME=`hostname | grep -Po "live-nexus-app\d\d"`
+    if [[ -z $CHECK_HOSTNAME ]]
+    then
+        return 1
+    else
+        return 0
+    fi
+}
+
+maven_availability_alerts() {
+    cn=0
+    while [ "X${maven_FILES[$cn]}" != "X" ]
+    do
+        maven_availability_check_url ${maven_FILES[$cn]} $maven_ROU $maven_ROP
+        cn=$(( cn + 1 ))
+    done
+}
+

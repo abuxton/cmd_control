@@ -1,0 +1,66 @@
+#!/bin/bash
+# 
+# Plugin to monitor the number of messages in RabbitMQ queue
+#
+
+# Get arguements
+
+while getopts 'w:c:hp' OPT; do
+  case $OPT in
+    w) int_warn=$OPTARG;;
+    c) int_crit=$OPTARG;;
+    h) hlp="yes";;
+    *) unknown="yes";;
+  esac
+done
+
+# usage
+
+HELP="
+  Usage: $0 [ -w value -c value -h ]
+
+  syntax:
+
+    -w --> Warning integer value
+    -c --> Critical integer value
+    -h --> print this help screen
+"
+
+if [ "$hlp" == "yes" -o $# -lt 1 ]; then
+  echo "$HELP"
+  exit 0
+fi
+
+# get number of messages in RabbitMQ
+RABBITMQCTL=`which rabbitmqctl`
+MESSAGES=`$RABBITMQCTL list_queues -p /chef | grep -v "^Listing" | grep -v "done.$" | perl -nle'($q, $s) = split; $q =~ s/\./_/g; print("$s")'`
+OUTPUT="messages: $MESSAGES"
+
+if [ -n "$int_warn" -a -n "$int_crit" ]; then
+
+  err=0
+
+  if (( $MESSAGES >= $int_crit )); then
+    err=2
+  elif (( $MESSAGES >= $int_warn )); then
+    err=1
+  fi
+
+  if (( $err == 0 )); then
+    echo "RMQ Queue Size OK - $OUTPUT"
+  elif (( $err == 1 )); then
+    echo "RMQ Queue Size WARNING - $OUTPUT"
+  elif (( $err == 2 )); then
+    echo "RMQ Queue Size CRITICAL - $OUTPUT"
+  fi
+
+  exit "$err"
+
+else
+
+  echo "no output from plugin"
+  exit 3
+fi
+exit
+
+

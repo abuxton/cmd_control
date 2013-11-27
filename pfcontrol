@@ -1,0 +1,283 @@
+#!/bin/bash
+# pfcontrol - service controller
+
+# Set up environment
+MYUSER="monitor"
+MYBASE="/opt/playfish/snmp"
+SCRIPT="`basename $0`"
+LOGFILE="$HOME/logs/pfcontrol.log"
+ALERTFILE="$HOME/.cache/alerts"
+
+# Where to find my own bits
+COMPONENTS="$MYBASE/components"
+MONITORS="$MYBASE/monitors"
+
+#Some common useful vars
+MYSQL_YESTERDAY=`/bin/date -d "yesterday" +"%Y-%m-%d"`
+
+
+# Helper routine to show usage message
+usage() {
+  (
+    echo "usage: $SCRIPT [--nowait] <option> [ <component>... | all ]"
+    echo "       (options are: start stop status online offline alerts tidy rotate)"
+    # there is also an undocumented 'install' method - dangerous!
+    if [ ! -z "$SERVICELIST" ]; then
+      echo "       (components are: $SERVICELIST)"
+    fi
+  ) >&2
+  exit 1
+}
+
+#check is a function is defined within a component
+fn_exists() {
+  type -t $1 | grep -q "function"
+  return $?
+}
+
+#common logging call - we should really get this from a common.sh functions file
+log() {
+  echo "`date +%Y%m%d-%H:%M:%S` ($$) $*" >> $LOGFILE
+}
+
+#common init once function to determine if a game is deployed on this instance
+is_deployed() {
+if [[ -z "$DEPLOYED_GAMES" ]]; then
+  if [[ -d /home/jetty/local ]]; then
+    if [[ -f /home/jetty/local/DEV.properties ]]; then
+      DEPLOYED_GAMES=`grep -hPo "^deploy.games.list=.*$" /home/jetty/local/DEV.properties | cut -d "=" -f 2-`
+    fi
+
+    if [[ -z "$DEPLOYED_GAMES" ]]; then
+      DEPLOYED_GAMES=`grep -hPo "^deploy.games.list=.*$" /home/jetty/local/*.properties | cut -d "=" -f 2-`
+    fi
+  fi
+fi
+
+while IFS=',' read -ra GAME; do
+  for i in "${GAME[@]}"; do
+    if [[ "$i" == "$1" ]];then
+      return 0;
+    fi
+  done    
+done <<< "$DEPLOYED_GAMES"
+return 1
+}
+
+
+#common function to add an alert in a standard way.
+add_alert() {
+  local name="$1"; local result="$2"; local comment="$3"
+    if [ -z "$name" ] || [ -z "$result" ]; then
+        echo "Error adding Alert: $name $result"
+        exit 1
+    else
+	if [ -z "$comment" ]; then
+	  ALERTS="$ALERTS $name"="$result"
+        #  NAGIOS_PACKET="`hostname`\t${name}\t${result}\tNo Details\n"
+        else
+          ALERTS="$ALERTS $name"="$result":`echo $comment | tr " " "_" | cut -c -150`
+         # NAGIOS_PACKET="`hostname`\t${name}\t${result}\t${comment}\n"
+        fi
+    fi
+#    if [ -x /usr/sbin/send_nsca ]; then
+##	echo -e "sending $NAGIOS_PACKET"
+  #      echo -e "$NAGIOS_PACKET" | /usr/sbin/send_nsca -H live-mon-nag00m.internal.live.playfish.com
+#        echo $NAGIOS_PACKET | /usr/sbin/send_nsca -H live-mon-nag00s.internal.live.playfish.com
+   # fi
+}
+
+#We need to run some diagnostics to confirm everything is OK every now and again!. 
+selftest() {
+  ERRORS=0
+
+  ### check we have the correct directory structures in place... ###
+  if [[ ! -d "$COMPONENTS" ]];then
+	ERRORS=$(($ERRORS+1))
+	echo "Can't find component directory: $COMPONENTS";
+  fi
+
+  if [[ ! -d "$MONITORS" ]];then
+	ERRORS=$(($ERRORS+1))
+	echo "Can't find monitors directory: $MONITORS";
+  fi
+
+  touch $LOGFILE > /dev/null 2>&1
+  if [[ $? -ne 0 ]];then
+	ERRORS=$(($ERRORS+1))
+	echo "Can't write to logs file: $LOGFILE";
+  fi
+
+  touch $ALERTFILE > /dev/null 2>&1
+  if [[ $? -ne 0 ]];then
+	ERRORS=$(($ERRORS+1))
+	echo "Can't write to alerts file: $ALERTFILE";
+  fi
+
+  ### test same name does not exist in both COMPONENTS and MONITORS/ALERTS ###
+  for comp in `find $COMPONENTS -maxdepth 1 -type f`; do
+    comp_name=`basename $comp`
+    if [[ -f $MONITORS/$comp_name ]]; then
+	ERRORS=$(($ERRORS+1))
+	echo "Duplicate component/monitor: $comp_name";
+    fi
+  #test every component has each function as defined in DEFAULT_COMPONENT (in same loop as previous test ###
+    . $comp
+    for fun in `grep -Po "DEFAULT_COMPONENT_.*\(" $COMPONENTS/DEFAULT_COMPONENT  | cut -d "_" -f 3- | tr -d "("`; do 
+      fn_exists ${comp_name}_${fun}
+      if [[ $? -ne 0 ]];then
+	ERRORS=$(($ERRORS+1))
+	echo "Function: $fun not defined in component: $comp_name";
+      fi
+    done
+  done
+
+  #test every monitor has an alerts and valid_monitor function
+  for mon in `find $MONITORS -maxdepth 1 -type f ! -name '.*.swp'`; do
+    mon_name=`basename $mon`
+    . $mon
+    for fun in `grep -Po "DEFAULT_MONITOR_.*\(" $MONITORS/DEFAULT_MONITOR  | cut -d "_" -f 3- | tr -d "("`; do 
+      fn_exists ${mon_name}_${fun}
+      if [[ $? -ne 0 ]];then
+	ERRORS=$(($ERRORS+1))
+	echo "Function: $fun not defined in monitor: $mon_name";
+      fi
+    done
+  done
+
+  if [[ $ERRORS -eq 0 ]];then
+   echo "No Errors Detected"
+  fi
+
+  return $ERRORS;
+}
+
+#MAIN.....
+
+# Ensure odd dump files etc. end up somewhere visible
+cd "$HOME"
+
+if [ "`id -u`" != "`id -u $MYUSER`" ]; then
+  echo "$SCRIPT: you must be $MYUSER to run this!" >&2
+  exit 1
+fi
+
+#Find all the components and determine which are relevent for this system
+for comp in `find $COMPONENTS -maxdepth 1 -type f`; do
+  comp_name=`basename $comp`
+  . $comp
+  ${comp_name}_valid_component
+  if [ $? -eq 0 ]; then
+      if [ -z "$SERVICELIST" ]; then SERVICELIST=$comp_name; else SERVICELIST="$SERVICELIST $comp_name"; fi
+  fi
+done
+
+# Parse the arguments
+if [ "$1" = "--nowait" ]; then
+  PFCONTROL_NOWAIT=1; shift
+fi
+
+COMMAND=$1; shift
+if [ -z "$COMMAND" ];then
+  usage
+fi
+
+#check if we've been asked to run our selftest diagnostics
+if [ "$COMMAND" = "selftest" ]; then
+  selftest;
+  exit $?
+fi
+
+#check if we've been asked to run our selftest diagnostics
+if [ "$COMMAND" = "update" ]; then
+  update;
+  exit $?
+fi
+
+# check the command we've been asked to run actually exists - it should ALWAYS be defined in the DEFAULT_COMPONENT component, even if it does nothing!
+fn_exists DEFAULT_COMPONENT_$COMMAND
+if [ $? -ne 0 ];then
+  echo "Unknown command $COMMAND"
+  exit 5
+fi
+
+
+#if we're running the alerts we need to now add in any valid "monitors" to the SERVICELIST variable.
+#Some services, such as billing warrent their tests in a seperate file but are infact apps deployed within the "jetty" framework so have no start/stop methods, etc
+if [ "$COMMAND" = "alerts" ]; then
+  for mon in `find $MONITORS -maxdepth 1 -type f ! -name '.*.swp'`; do
+    mon_name=`basename $mon`
+    . $mon
+    ${mon_name}_valid_monitor
+    if [ $? -eq 0 ]; then
+      if [ -z "$SERVICELIST" ]; then SERVICELIST=$mon_name; else SERVICELIST="$SERVICELIST $mon_name"; fi
+    fi
+  done
+fi
+
+SERVICES=
+if [ -z "$1" ]; then 
+  SERVICES=all
+else
+  while [ $# -gt 0 ]; do
+    if echo " all $SERVICELIST " | grep -q " $1 " 2>/dev/null; then
+      if [ -z "$SERVICES" ]; then SERVICES=$1; else SERVICES="$SERVICES $1"; fi
+    else
+      echo "$SCRIPT: invalid component '$1' for this instance!" >&2
+      usage
+    fi
+    shift
+  done
+  if echo " $SERVICES " | grep -q " all " 2>/dev/null && \
+	[ "$SERVICES" != "all" ]; then
+    echo "$SCRIPT: cannot specify 'all' with other components!" >&2
+    usage
+  fi
+fi
+
+[ "$SERVICES" = "all" ] && SERVICES="$SERVICELIST"
+
+#Now we actually execute the right things....
+ALERTS=
+for SERVICE in $SERVICES; do
+  MESSAGE= 
+  pid=
+  if [ "$COMMAND" = "alerts" ]; then
+    ${SERVICE}_${COMMAND}
+  else
+    echo -n "$SERVICE: "
+    ${SERVICE}_${COMMAND}
+    rc=$?
+    if [ "$COMMAND" = "status" ]; then
+      if [ $rc -eq 0 ]; then
+	[ -n "$pid" ] && pidout="pid $pid" || pidout="no pid"
+          echo "running ($pidout) $MESSAGE"
+      else
+          echo "missing $MESSAGE"
+      fi
+    else
+      [ $rc -eq 0 ] && echo "done" || echo "failed"
+      [ $rc -eq 1 ] && exit 1
+    fi
+  fi
+done
+
+# Finally, handle the caching of alerts for the web monitor
+if [ "$COMMAND" = "alerts" ]; then
+  TEMP="$HOME/.cache/alerts.$$"
+  trap 'rm -f "$TEMP"' 1 2 3 15
+  touch "$TEMP"
+
+ if [ "$TEMP" ]; then
+  for a in $ALERTS; do 
+    echo $a
+    echo $a >> "$TEMP"
+   done
+ fi
+
+ if [ "$TEMP" ]; then
+   mv "$TEMP" "$HOME/.cache/alerts"
+ fi
+fi
+
+exit 0
