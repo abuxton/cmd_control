@@ -3,7 +3,7 @@
 
 # Set up environment
 MYUSER="monitor"
-MYBASE="/opt/playfish/snmp"
+MYBASE=$( pwd )
 SCRIPT="`basename $0`"
 LOGFILE="$HOME/logs/pfcontrol.log"
 ALERTFILE="$HOME/.cache/alerts"
